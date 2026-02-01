@@ -1,0 +1,2 @@
+Ticker,Name,Sharpe Optimal (%),Min Vol Optimal (%),Recommended (%),Method,Original Sharpe,New Sharpe,Original Vol (%),New Vol (%)
+BMY,Bristol-Myers Squibb Company,0.0%,25.0%,25.0%,Risk Budgeting,0.788,0.658,15.82%,14.22%

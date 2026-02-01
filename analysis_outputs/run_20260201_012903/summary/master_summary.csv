@@ -1,0 +1,11 @@
+Ticker,Name,Optimal Allocation,Method,BT: Return Impact,BT: Vol Impact,BT: Sharpe Impact,Current Price,DCF Fair Value,DCF Margin of Safety,Win Probability,P/E Discount,EV/EBITDA Discount
+ELV,Elevance Health Inc.,19.4%,Risk Budgeting,-1.66%,-0.91%,-0.063,$345.74,$810.16,134.3%,100%,+64.6%,+109.8%
+LLY,Eli Lilly and Company,25.0%,Sharpe Optimization,+6.77%,+0.35%,+0.402,$1037.15,$3.06,-99.7%,0%,-2.2%,-10.4%
+MCK,McKesson Corporation,5.0%,Default,+1.09%,-0.50%,+0.097,$831.21,$1826.85,119.8%,100%,-2.5%,+3.9%
+MRK,Merck & Co. Inc.,21.9%,Sharpe Optimization,-0.25%,-1.58%,+0.070,$110.27,$378.44,243.2%,100%,+61.5%,+52.1%
+GILD,Gilead Sciences Inc.,25.0%,Sharpe Optimization,+1.58%,-1.22%,+0.174,$141.95,$260.78,83.7%,100%,+6.1%,+1.6%
+VRTX,Vertex Pharmaceuticals Incorporated,23.5%,Sharpe Optimization,+0.87%,-0.53%,+0.084,$469.90,$50.21,-89.3%,0%,-18.9%,-19.3%
+JNJ,Johnson & Johnson,23.0%,Sharpe Optimization,-1.20%,-2.13%,+0.035,$227.25,$252.44,11.1%,66%,+25.7%,-5.4%
+BMY,Bristol-Myers Squibb Company,25.0%,Risk Budgeting,-3.11%,-1.60%,-0.130,$55.05,$282.78,413.7%,100%,+23.9%,+83.1%
+COR,Cencora Inc.,25.0%,Sharpe Optimization,+3.64%,-1.71%,+0.354,$359.22,$517.39,44.0%,98%,-40.8%,-0.9%
+AMGN,Amgen Inc.,14.3%,Sharpe Optimization,-0.37%,-0.91%,+0.023,$341.88,$740.13,116.5%,100%,-2.8%,+25.5%

@@ -1,0 +1,2 @@
+Ticker,Name,Sharpe Optimal (%),Min Vol Optimal (%),Recommended (%),Method,Original Sharpe,New Sharpe,Original Vol (%),New Vol (%)
+ELV,Elevance Health Inc.,0.0%,19.4%,19.4%,Risk Budgeting,0.788,0.725,15.82%,14.91%
