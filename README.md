@@ -195,25 +195,26 @@ Any gap between target weight and Top 10 is filled with iShares Global ETFs:
 
 **Automatically find the best allocation** for a candidate stock using **Mean-Variance Utility Maximization**.
 
-### Primary Method: Mean-Variance Utility
+### Primary Method: Mean-Variance Utility (with Concentration Penalty)
 
 The allocation is chosen by maximizing the utility function:
 
-$$U = E[R] - \frac{\lambda}{2} \times \sigma^2$$
+$$U = E[R] - \frac{\lambda}{2} \times \sigma^2 - \gamma \times w^2$$
 
 Where:
 - **E[R]** = Expected annualized return
 - **σ** = Annualized volatility
-- **λ** = Risk aversion coefficient (configurable)
+- **w** = Allocation weight (0 to 1)
+- **λ** = Risk aversion coefficient (Default: 2.0)
+- **γ** = Concentration penalty (Default: 0.5)
+
+The term $-\gamma \times w^2$ acts as a **soft cap**, mathematically discouraging extreme allocations (like 25%) in favor of more diversified positions (typically 5-15%).
 
 ```python
-# Configure risk profile in optimal_allocation.py
-RISK_AVERSION = 3.0  # Default: moderate investor
-
-# Interpretation:
-# λ = 1-2: Aggressive (maximize return, accept volatility)
-# λ = 3-5: Moderate (balanced risk/return)
-# λ = 6-10: Conservative (minimize volatility, accept lower return)
+# Parameters in optimal_allocation.py
+RISK_AVERSION = 2.0          # Moderate-Aggressive
+CONCENTRATION_PENALTY = 0.5  # Institutional-grade diversification
+MIN_RECOMMENDED_ALLOCATION = 0.03 # Floor
 ```
 
 ### Reference Methods (for comparison)

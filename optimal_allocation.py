@@ -4,15 +4,16 @@ ECE Portfolio Analysis Engine
 Optimal Allocation Finder
 =========================
 Automatically finds the optimal allocation for a candidate stock using:
-1. Mean-Variance Utility Maximization - Primary method with configurable risk aversion (λ)
+1. Mean-Variance Utility Maximization (with Concentration Penalty) - Primary method
 2. Sharpe Ratio Optimization - Reference (λ→0 asymptotic case)
 3. Minimum Volatility - Reference (λ→∞ asymptotic case)
 
-The utility function is: U = E[R] - (λ/2) × σ²
-Where λ (RISK_AVERSION) controls the investor profile:
-  - λ = 1-2: Aggressive (closer to Max Sharpe)
-  - λ = 3-5: Moderate (balanced)
-  - λ = 6-10: Conservative (closer to Min Volatility)
+The utility function is: U = E[R] - (λ/2) × σ² - γ × w²
+Where:
+  - λ (RISK_AVERSION = 2.0): Penalizes volatility
+  - γ (CONCENTRATION_PENALTY = 0.5): Penalizes high allocations (quadratic cost)
+
+This ensures allocations remain realistic (typically 5-15%) rather than hitting 25% caps.
 
 Author: Josh E. SOUSSAN
 Usage: python optimal_allocation.py
@@ -44,13 +45,23 @@ MIN_ALLOCATION = 0.00  # 0%
 MAX_ALLOCATION = 0.25  # 25%
 ALLOCATION_STEPS = 50  # Granularity
 
+# Minimum recommended allocation (floor for "BUY" signals)
+# If utility optimization suggests less than this, we recommend this floor
+# Set to 0 to allow 0% recommendations
+MIN_RECOMMENDED_ALLOCATION = 0.03  # 3% minimum position
+
 # Risk-free rate
 RISK_FREE_RATE = 0.04
 
 # Risk aversion parameter for Mean-Variance Utility
 # Higher = more conservative (closer to MinVol), Lower = more aggressive (closer to MaxSharpe)
 # Typical values: 1-2 (aggressive), 3-5 (moderate), 6-10 (conservative)
-RISK_AVERSION = 3.0
+RISK_AVERSION = 2.0
+
+# Concentration penalty for utility function
+# Adds term: -γ × w² to penalize high allocations
+# Higher γ = stronger pull toward moderate allocations
+CONCENTRATION_PENALTY = 0.5
 
 # Data parameters
 LOOKBACK_YEARS = 5
@@ -253,22 +264,38 @@ def calculate_metrics(returns: pd.Series, risk_free: float = 0.04,
     return ann_return, ann_vol, sharpe
 
 
-def calculate_utility(returns: pd.Series, risk_aversion: float = 3.0,
+def calculate_utility(returns: pd.Series, risk_aversion: float = 2.5,
+                      concentration_penalty: float = 0.8,
+                      allocation: float = 0.0,
                       risk_free: float = 0.04, periods_per_year: int = 52) -> float:
     """
-    Calculate Mean-Variance Utility.
+    Calculate Mean-Variance Utility with Concentration Penalty.
     
-    U = E[R] - (λ/2) * σ²
+    U = E[R] - (λ/2) × σ² - γ × w²
     
     Where:
         E[R] = Expected (annualized) return
-        λ = Risk aversion coefficient
+        λ = Risk aversion coefficient (penalizes volatility)
         σ = Annualized volatility
+        γ = Concentration penalty (penalizes high allocations)
+        w = Allocation weight (0 to 1)
     
-    Higher utility = better risk-adjusted performance for given risk preference.
+    The concentration penalty pulls allocations toward moderate values (~10%)
+    instead of hitting corners (0% or 25%).
+    
+    Institutional-grade parameters:
+        λ = 2.5 (moderate risk aversion)
+        γ = 0.8 (strong anti-concentration)
     """
     ann_return, ann_vol, _ = calculate_metrics(returns, risk_free, periods_per_year)
-    utility = ann_return - (risk_aversion / 2) * (ann_vol ** 2)
+    
+    # Base utility: return minus risk penalty
+    base_utility = ann_return - (risk_aversion / 2) * (ann_vol ** 2)
+    
+    # Concentration penalty: quadratic penalty on allocation weight
+    concentration_cost = concentration_penalty * (allocation ** 2)
+    
+    utility = base_utility - concentration_cost
     return utility
 
 
@@ -328,7 +355,7 @@ def scan_allocations(original_returns: pd.Series,
     for alloc in allocations:
         blended = construct_blended_portfolio(original_returns, candidate_returns, alloc)
         ann_ret, ann_vol, sharpe = calculate_metrics(blended)
-        utility = calculate_utility(blended, RISK_AVERSION)
+        utility = calculate_utility(blended, RISK_AVERSION, CONCENTRATION_PENALTY, alloc)
         mctr = calculate_mctr(original_returns, candidate_returns, alloc)
         
         sharpe_values.append(sharpe)
@@ -472,24 +499,38 @@ def optimize_allocation(ticker: str, name: str) -> OptimizationResult:
     
     # Method 3: Mean-Variance Utility (PRIMARY METHOD)
     utility_alloc, utility_value = find_utility_optimal(scan_data)
-    orig_utility = calculate_utility(original_returns, RISK_AVERSION)
-    print(f"\n   🎯 MEAN-VARIANCE UTILITY (λ={RISK_AVERSION}):")
+    orig_utility = calculate_utility(original_returns, RISK_AVERSION, CONCENTRATION_PENALTY, 0.0)
+    print(f"\n   🎯 MEAN-VARIANCE UTILITY (λ={RISK_AVERSION}, γ={CONCENTRATION_PENALTY}):")
     print(f"      Best Allocation: {utility_alloc*100:.1f}%")
     print(f"      Utility: {utility_value:.2f}% (vs {orig_utility*100:.2f}% original)")
-    print(f"      (λ=1-2: aggressive, 3-5: moderate, 6-10: conservative)")
+    print(f"      (γ penalizes high allocations → targets ~10%)")
     
     # Combined recommendation: Use Utility Maximization as primary method
     print("\n4. Generating recommendation...")
     
-    recommended = utility_alloc
-    method = f"Mean-Variance Utility (λ={RISK_AVERSION})"
+    # Apply minimum floor for positions (institutional constraint)
+    if utility_alloc > 0 and utility_alloc < MIN_RECOMMENDED_ALLOCATION:
+        recommended = MIN_RECOMMENDED_ALLOCATION
+        method = f"Mean-Variance Utility (λ={RISK_AVERSION}, γ={CONCENTRATION_PENALTY}) [floor applied]"
+    elif utility_alloc == 0:
+        # Check if any positive utility exists - if so, apply floor
+        max_util_idx = np.argmax(scan_data['utility'])
+        if scan_data['utility'][max_util_idx] > scan_data['utility'][0]:  # Improvement exists
+            recommended = MIN_RECOMMENDED_ALLOCATION
+            method = f"Mean-Variance Utility (λ={RISK_AVERSION}, γ={CONCENTRATION_PENALTY}) [floor applied]"
+        else:
+            recommended = 0.0
+            method = f"Mean-Variance Utility (λ={RISK_AVERSION}, γ={CONCENTRATION_PENALTY}) [no benefit]"
+    else:
+        recommended = utility_alloc
+        method = f"Mean-Variance Utility (λ={RISK_AVERSION}, γ={CONCENTRATION_PENALTY})"
     
     # Calculate metrics at recommended allocation
     blended = construct_blended_portfolio(original_returns, candidate_returns, recommended)
     new_ret, new_vol, new_sharpe = calculate_metrics(blended)
     
     # Calculate new utility at recommended allocation
-    new_utility = calculate_utility(blended, RISK_AVERSION)
+    new_utility = calculate_utility(blended, RISK_AVERSION, CONCENTRATION_PENALTY, recommended)
     
     # Create result
     result = OptimizationResult(
