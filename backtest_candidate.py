@@ -184,7 +184,7 @@ def compute_portfolio_returns(prices: pd.DataFrame, weights: dict,
 
 def calculate_metrics(returns: pd.Series, benchmark_returns: pd.Series,
                      risk_free_rate: float = 0.04, periods_per_year: int = 52) -> dict:
-    """Calculate comprehensive risk metrics."""
+    """Calculate comprehensive risk metrics matching portfolio_reconstruction.py output."""
     metrics = {}
     
     # Align series
@@ -214,26 +214,37 @@ def calculate_metrics(returns: pd.Series, benchmark_returns: pd.Series,
     beta = cov / bench_var if bench_var != 0 else 1
     metrics['Beta vs ACWI'] = beta
     
-    # Maximum Drawdown
-    cumulative = (1 + ret).cumprod()
-    running_max = cumulative.cummax()
-    drawdown = (cumulative - running_max) / running_max
-    metrics['Max Drawdown (%)'] = drawdown.min() * 100
-    
     # Alpha (Jensen's)
     bench_total = (1 + bench).prod() - 1
     bench_ann = (1 + bench_total) ** (1 / years) - 1
     alpha = ann_return - (risk_free_rate + beta * (bench_ann - risk_free_rate))
     metrics['Alpha (%)'] = alpha * 100
     
-    # Information Ratio
-    tracking_diff = ret - bench
-    tracking_error = tracking_diff.std() * np.sqrt(periods_per_year)
-    excess_return = ann_return - bench_ann
-    metrics['Information Ratio'] = excess_return / tracking_error if tracking_error != 0 else 0
+    # VaR (95%, period) - Historical VaR at 95% confidence (5th percentile)
+    var_95 = np.percentile(ret, 5)
+    metrics['VaR (95%, period)'] = var_95 * 100
+    
+    # VaR (95%, annualized) - Same formula as portfolio_reconstruction.py
+    var_95_annual = var_95 * np.sqrt(periods_per_year)
+    metrics['VaR (95%, annualized)'] = var_95_annual * 100
+    
+    # Maximum Drawdown
+    cumulative = (1 + ret).cumprod()
+    running_max = cumulative.cummax()
+    drawdown = (cumulative - running_max) / running_max
+    metrics['Max Drawdown (%)'] = drawdown.min() * 100
     
     # Correlation with benchmark
     metrics['Correlation vs ACWI'] = ret.corr(bench)
+    
+    # Tracking Error
+    tracking_diff = ret - bench
+    tracking_error = tracking_diff.std() * np.sqrt(periods_per_year)
+    metrics['Tracking Error (%)'] = tracking_error * 100
+    
+    # Information Ratio
+    excess_return = ann_return - bench_ann
+    metrics['Information Ratio'] = excess_return / tracking_error if tracking_error != 0 else 0
     
     return metrics
 
@@ -376,7 +387,7 @@ def plot_analysis(old_portfolio: pd.Series, new_portfolio: pd.Series,
 def print_impact_summary(metrics_before: dict, metrics_after: dict, 
                          candidate_metrics: dict, correlations: dict,
                          candidate_name: str, allocation_pct: float):
-    """Print formatted impact summary."""
+    """Print formatted impact summary with complete portfolio metrics."""
     
     print("\n" + "="*80)
     print(f"IMPACT ANALYSIS: Adding {candidate_name} at {allocation_pct:.0%} Allocation")
@@ -391,12 +402,30 @@ def print_impact_summary(metrics_before: dict, metrics_after: dict,
     sharpe_change = metrics_after['Sharpe Ratio'] - metrics_before['Sharpe Ratio']
     beta_change = metrics_after['Beta vs ACWI'] - metrics_before['Beta vs ACWI']
     dd_change = metrics_after['Max Drawdown (%)'] - metrics_before['Max Drawdown (%)']
+    var_period_change = metrics_after['VaR (95%, period)'] - metrics_before['VaR (95%, period)']
+    var_annual_change = metrics_after['VaR (95%, annualized)'] - metrics_before['VaR (95%, annualized)']
     
-    print(f"  • Return:     {ret_change:+.2f}% ({'↑' if ret_change > 0 else '↓'})")
-    print(f"  • Volatility: {vol_change:+.2f}% ({'↓ Better' if vol_change < 0 else '↑ Higher Risk'})")
-    print(f"  • Sharpe:     {sharpe_change:+.3f} ({'↑ Better' if sharpe_change > 0 else '↓ Worse'})")
-    print(f"  • Beta:       {beta_change:+.3f} ({'↓ More Defensive' if beta_change < 0 else '↑ More Aggressive'})")
-    print(f"  • Max DD:     {dd_change:+.2f}% ({'↑ Worse' if dd_change > 0 else '↓ Better'})")
+    print(f"  • Return:          {ret_change:+.2f}% ({'↑' if ret_change > 0 else '↓'})")
+    print(f"  • Volatility:      {vol_change:+.2f}% ({'↓ Better' if vol_change < 0 else '↑ Higher Risk'})")
+    print(f"  • Sharpe:          {sharpe_change:+.3f} ({'↑ Better' if sharpe_change > 0 else '↓ Worse'})")
+    print(f"  • Beta:            {beta_change:+.3f} ({'↓ More Defensive' if beta_change < 0 else '↑ More Aggressive'})")
+    print(f"  • Max DD:          {dd_change:+.2f}% ({'↑ Worse' if dd_change > 0 else '↓ Better'})")
+    print(f"  • VaR (95% ann.):  {var_annual_change:+.2f}% ({'↑ Better' if var_annual_change > 0 else '↓ Worse'})")
+    
+    # New Portfolio Complete Metrics
+    print("\n📈 NEW PORTFOLIO COMPLETE METRICS:")
+    print("-"*40)
+    print(f"  • Annualized Return:       {metrics_after['Annualized Return (%)']:.2f}%")
+    print(f"  • Annualized Volatility:   {metrics_after['Annualized Volatility (%)']:.2f}%")
+    print(f"  • Sharpe Ratio:            {metrics_after['Sharpe Ratio']:.3f}")
+    print(f"  • Beta vs ACWI:            {metrics_after['Beta vs ACWI']:.3f}")
+    print(f"  • Alpha:                   {metrics_after['Alpha (%)']:.2f}%")
+    print(f"  • VaR (95%, weekly):       {metrics_after['VaR (95%, period)']:.2f}%")
+    print(f"  • VaR (95%, annualized):   {metrics_after['VaR (95%, annualized)']:.2f}%")
+    print(f"  • Max Drawdown:            {metrics_after['Max Drawdown (%)']:.2f}%")
+    print(f"  • Correlation vs ACWI:     {metrics_after['Correlation vs ACWI']:.4f}")
+    print(f"  • Tracking Error:          {metrics_after['Tracking Error (%)']:.2f}%")
+    print(f"  • Information Ratio:       {metrics_after['Information Ratio']:.3f}")
     
     # Correlation Insights
     print("\n🔗 DIVERSIFICATION ANALYSIS:")
