@@ -770,8 +770,6 @@ class RelativeValuation:
                 continue  # Skip failed tickers
         
         return pd.DataFrame(data)
-        
-        return pd.DataFrame(data)
     
     @staticmethod
     def run_regression(df: pd.DataFrame, x_col: str, y_col: str) -> Tuple[float, float, float, float]:
@@ -918,7 +916,7 @@ class RelativeValuation:
                 cash = info.get('totalCash', 0) or 0
                 implied_ev = result.ev_implied_by_growth * ebitda
                 implied_equity = implied_ev - total_debt + cash
-                result.fair_price_ev = implied_equity / shares if shares > 0 else 0
+                result.fair_price_ev = max(0, implied_equity / shares) if shares > 0 else 0
             
             if verbose:
                 print(f"\n   --- Regression Results ---")
