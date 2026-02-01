@@ -47,10 +47,11 @@ All orchestrated via a single script that outputs organized results to timestamp
 | File                                                                                          | Lines | Purpose                                  |
 | :-------------------------------------------------------------------------------------------- | :---- | :--------------------------------------- |
 | [run_analysis.py](file:///c:/Users/Joshs/Desktop/BI/ECE/run_analysis.py)                         | ~500  | Master orchestrator - runs all 4 modules |
-| [run_from_screener.py](file:///c:/Users/Joshs/Desktop/BI/ECE/run_from_screener.py)               | ~200  | Analyze screener CSV                     |
+| [run_from_screener.py](file:///c:/Users/Joshs/Desktop/BI/ECE/run_from_screener.py)               | ~350  | Analyze screener CSV                     |
+| [run_multi_allocation.py](file:///c:/Users/Joshs/Desktop/BI/ECE/run_multi_allocation.py)         | ~150  | Multi-allocation metrics generator       |
 | [portfolio_reconstruction.py](file:///c:/Users/Joshs/Desktop/BI/ECE/portfolio_reconstruction.py) | ~760  | Portfolio weights + risk metrics         |
 | [optimal_allocation.py](file:///c:/Users/Joshs/Desktop/BI/ECE/optimal_allocation.py)             | ~700  | Mean-Variance Utility optimization       |
-| [backtest_candidate.py](file:///c:/Users/Joshs/Desktop/BI/ECE/backtest_candidate.py)             | ~680  | Pro-forma portfolio impact analysis      |
+| [backtest_candidate.py](file:///c:/Users/Joshs/Desktop/BI/ECE/backtest_candidate.py)             | ~700  | Pro-forma portfolio impact (incl. VaR)   |
 | [valuation_engine.py](file:///c:/Users/Joshs/Desktop/BI/ECE/valuation_engine.py)                 | ~1100 | DCF + Monte Carlo + Relative Valuation   |
 
 ---
@@ -94,6 +95,7 @@ python run_from_screener.py --skip-optimal --skip-backtest
 | `--skip-backtest`  | Skip backtesting                                        |
 | `--skip-valuation` | Skip valuation engine                                   |
 | `--only-valuation` | Only run valuation (quick mode)                         |
+| `--multi-alloc`, `-m` | Run multi-allocation analysis (0.5% granularity)    |
 | `--all`            | Analyze all stocks in screener (default: 10)            |
 
 ### ⚠️ Screener Filtering Recommendations
@@ -122,6 +124,49 @@ revenue > 100000000
 > - DCF Fair Value: $0.00 (no FCF)
 > - P/E Discount: +35,000% (nonsensical)
 > - Optimal Allocation: 0% (too volatile)
+
+---
+
+## 📊 Multi-Allocation Analysis
+
+### Purpose
+
+Generate **comprehensive metrics at 0.5% allocation granularity** from 0.5% to the optimal allocation for any stock.
+
+### Standalone Usage
+
+```bash
+# Run for a single ticker
+python run_multi_allocation.py COR "Cencora Inc."
+python run_multi_allocation.py JNJ "Johnson & Johnson"
+```
+
+### Batch Usage (via Screener)
+
+```bash
+# Run multi-allocation for all stocks in screener
+python run_from_screener.py --multi-alloc --top 5
+
+# Combined with other options
+python run_from_screener.py --csv my_screener.csv --multi-alloc --skip-valuation
+```
+
+### Output
+
+For each stock, generates `{TICKER}_multi_allocation.csv` with:
+
+| Column | Description |
+|--------|-------------|
+| `Allocation (%)` | 0.5, 1.0, 1.5, ... up to optimal |
+| `Is Optimal` | "Yes" or "No" |
+| `Annualized Return (%)` | Portfolio return at this allocation |
+| `Sharpe Ratio` | Risk-adjusted return |
+| `VaR (95%, annualized)` | Value at Risk (annualized) |
+| `Max Drawdown (%)` | Maximum drawdown |
+| `Return Change (%)` | Change vs original portfolio |
+| `Sharpe Change` | Change in Sharpe ratio |
+
+> **Note**: Multi-allocation analysis is computationally expensive. For a stock with 16% optimal allocation, it runs 33 backtests (0.5% to 16.5%).
 
 ---
 
@@ -375,6 +420,7 @@ analysis_outputs/run_{TIMESTAMP}/
 │   ├── optimal_summary.csv         # Individual optimal allocation
 │   ├── backtest.png                # Backtest visualization
 │   ├── backtest.csv                # Backtest metrics
+│   ├── {TICKER}_multi_allocation.csv  # Multi-allocation metrics (if --multi-alloc)
 │   ├── valuation_dcf.png           # DCF chart
 │   └── valuation_relative.png      # Relative valuation chart
 │
