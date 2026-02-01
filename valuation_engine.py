@@ -42,6 +42,10 @@ N_SIMULATIONS = 10000
 # Growth rate cap
 MAX_GROWTH_RATE = 0.10  # 10% cap
 
+# Sanity bounds for DCF output (relative to current price)
+DCF_UPPER_BOUND_MULTIPLIER = 5.0  # Flag if DCF > 5x current price
+DCF_LOWER_BOUND_MULTIPLIER = 0.10  # Flag if DCF < 10% of current price
+
 
 # =============================================================================
 # DATA CLASSES
@@ -79,8 +83,13 @@ class FinancialData:
     cost_of_debt: float = 0.0
     wacc: float = 0.0
     
+    # Validation
     is_valid: bool = True
     error_message: str = ""
+    
+    # Data quality tracking - list of fields that were missing/defaulted
+    missing_fields: list = field(default_factory=list)
+    data_quality_warnings: list = field(default_factory=list)
 
 
 @dataclass
@@ -138,22 +147,38 @@ class DataFetcher:
             stock = yf.Ticker(ticker)
             info = stock.info
             
-            # Basic Info
+            # Basic Info - track if missing
             data.current_price = info.get('currentPrice') or info.get('regularMarketPrice', 0)
+            if data.current_price == 0:
+                data.missing_fields.append('current_price')
+            
             data.shares_outstanding = info.get('sharesOutstanding', 0)
+            if data.shares_outstanding == 0:
+                data.missing_fields.append('shares_outstanding')
+            
             data.market_cap = info.get('marketCap', 0)
+            if data.market_cap == 0:
+                data.missing_fields.append('market_cap')
+            
             data.beta = info.get('beta', 1.0) or 1.0
+            if info.get('beta') is None:
+                data.missing_fields.append('beta (defaulted to 1.0)')
             
             if data.current_price == 0:
                 # Try to get from history
                 hist = stock.history(period='5d')
                 if not hist.empty:
                     data.current_price = hist['Close'].iloc[-1]
+                    data.data_quality_warnings.append('price from history fallback')
+                    data.missing_fields.remove('current_price') if 'current_price' in data.missing_fields else None
             
             # Financials
             try:
                 income = stock.financials
-                if not income.empty:
+                if income.empty:
+                    data.missing_fields.append('income_statement')
+                    data.data_quality_warnings.append('No income statement data available')
+                else:
                     # Revenue
                     if 'Total Revenue' in income.index:
                         revenues = income.loc['Total Revenue'].dropna().values
@@ -163,16 +188,32 @@ class DataFetcher:
                                 data.revenue_growth_3y = DataFetcher._calculate_cagr(
                                     revenues[-1], revenues[0], min(3, len(revenues)-1)
                                 )
+                            else:
+                                data.missing_fields.append('revenue_growth_3y (insufficient history)')
                             if len(revenues) >= 5:
                                 data.revenue_growth_5y = DataFetcher._calculate_cagr(
                                     revenues[-1], revenues[0], min(5, len(revenues)-1)
                                 )
+                            else:
+                                data.missing_fields.append('revenue_growth_5y (insufficient history)')
+                        else:
+                            data.missing_fields.append('revenue')
+                    else:
+                        data.missing_fields.append('revenue')
                     
                     # EBIT
                     if 'EBIT' in income.index:
-                        data.ebit = income.loc['EBIT'].dropna().values[0] if len(income.loc['EBIT'].dropna()) > 0 else 0
+                        ebit_vals = income.loc['EBIT'].dropna().values
+                        data.ebit = ebit_vals[0] if len(ebit_vals) > 0 else 0
                     elif 'Operating Income' in income.index:
-                        data.ebit = income.loc['Operating Income'].dropna().values[0] if len(income.loc['Operating Income'].dropna()) > 0 else 0
+                        oi_vals = income.loc['Operating Income'].dropna().values
+                        data.ebit = oi_vals[0] if len(oi_vals) > 0 else 0
+                        data.data_quality_warnings.append('Using Operating Income as EBIT proxy')
+                    else:
+                        data.missing_fields.append('ebit')
+                    
+                    if data.ebit < 0:
+                        data.data_quality_warnings.append(f'Negative EBIT: {data.ebit/1e9:.2f}B')
                     
                     if data.revenue > 0:
                         data.ebit_margin = data.ebit / data.revenue
@@ -181,13 +222,18 @@ class DataFetcher:
                     if 'Interest Expense' in income.index:
                         ie = income.loc['Interest Expense'].dropna().values
                         data.interest_expense = abs(ie[0]) if len(ie) > 0 else 0
+                    else:
+                        data.missing_fields.append('interest_expense')
             except Exception as e:
                 print(f"  Warning: Could not fetch income statement for {ticker}: {e}")
+                data.data_quality_warnings.append(f'Income statement error: {str(e)[:50]}')
             
             # Cash Flow
             try:
                 cf = stock.cashflow
-                if not cf.empty:
+                if cf.empty:
+                    data.missing_fields.append('cash_flow_statement')
+                else:
                     if 'Free Cash Flow' in cf.index:
                         fcf_values = cf.loc['Free Cash Flow'].dropna().values
                         data.free_cash_flow = fcf_values[0] if len(fcf_values) > 0 else 0
@@ -198,39 +244,60 @@ class DataFetcher:
                             capex = cf.loc['Capital Expenditure'].dropna().values
                             if len(ocf) > 0 and len(capex) > 0:
                                 data.free_cash_flow = ocf[0] + capex[0]  # CapEx is negative
+                                data.data_quality_warnings.append('FCF calculated from OCF - CapEx')
+                            else:
+                                data.missing_fields.append('free_cash_flow')
+                        else:
+                            data.missing_fields.append('free_cash_flow')
+                    
+                    if data.free_cash_flow < 0:
+                        data.data_quality_warnings.append(f'Negative FCF: {data.free_cash_flow/1e9:.2f}B')
                     
                     if data.revenue > 0:
                         data.fcf_margin = data.free_cash_flow / data.revenue
             except Exception as e:
                 print(f"  Warning: Could not fetch cash flow for {ticker}: {e}")
+                data.data_quality_warnings.append(f'Cash flow error: {str(e)[:50]}')
             
             # Balance Sheet
             try:
                 bs = stock.balance_sheet
-                if not bs.empty:
+                if bs.empty:
+                    data.missing_fields.append('balance_sheet')
+                else:
                     if 'Total Debt' in bs.index:
                         debt_values = bs.loc['Total Debt'].dropna().values
                         data.total_debt = debt_values[0] if len(debt_values) > 0 else 0
                     elif 'Long Term Debt' in bs.index:
                         debt_values = bs.loc['Long Term Debt'].dropna().values
                         data.total_debt = debt_values[0] if len(debt_values) > 0 else 0
+                        data.data_quality_warnings.append('Using Long Term Debt only (no Total Debt)')
+                    else:
+                        data.missing_fields.append('total_debt')
                     
                     if 'Cash And Cash Equivalents' in bs.index:
                         cash_values = bs.loc['Cash And Cash Equivalents'].dropna().values
                         data.cash = cash_values[0] if len(cash_values) > 0 else 0
+                    else:
+                        data.missing_fields.append('cash')
             except Exception as e:
                 print(f"  Warning: Could not fetch balance sheet for {ticker}: {e}")
+                data.data_quality_warnings.append(f'Balance sheet error: {str(e)[:50]}')
             
             # Calculate WACC
             data = DataFetcher._calculate_wacc(data)
             
-            # Validation
+            # Final validation
             if data.current_price <= 0 or data.shares_outstanding <= 0:
                 data.is_valid = False
-                data.error_message = "Missing critical data (price or shares)"
+                data.error_message = f"Missing critical data: {', '.join(data.missing_fields[:3])}"
             elif data.free_cash_flow <= 0 and data.revenue <= 0:
                 data.is_valid = False
                 data.error_message = "No positive FCF or Revenue data"
+            
+            # Summary warning if many fields missing
+            if len(data.missing_fields) > 5:
+                data.data_quality_warnings.append(f'{len(data.missing_fields)} data fields missing')
                 
         except Exception as e:
             data.is_valid = False
@@ -289,27 +356,47 @@ class DCFValuation:
     def calculate(data: FinancialData, 
                   growth_override: Optional[float] = None,
                   wacc_override: Optional[float] = None,
-                  terminal_growth_override: Optional[float] = None) -> float:
+                  terminal_growth_override: Optional[float] = None,
+                  fcf_override: Optional[float] = None) -> float:
         """
         Calculate DCF intrinsic value.
         
         Returns enterprise value.
+        
+        Parameters:
+        - fcf_override: If provided, use this as base FCF (for Monte Carlo margin simulation)
         """
-        # Base FCF
-        if data.free_cash_flow > 0:
+        # Base FCF - use override if provided (for Monte Carlo)
+        if fcf_override is not None and fcf_override > 0:
+            base_fcf = fcf_override
+        elif data.free_cash_flow > 0:
             base_fcf = data.free_cash_flow
         elif data.ebit > 0:
-            # Estimate FCF from EBIT
+            # Estimate FCF from EBIT (after-tax approximation)
             base_fcf = data.ebit * 0.75  # Rough proxy
         else:
+            # No positive FCF or EBIT - cannot value
             return 0.0
         
-        # Growth rate
+        # Growth rate - use weighted average instead of max for more conservative estimate
         if growth_override is not None:
             growth = growth_override
         else:
-            # Use minimum of historical growth and cap
-            hist_growth = max(data.revenue_growth_3y, data.revenue_growth_5y)
+            # Use weighted average of 3Y and 5Y growth (favor recent)
+            # Handle cases where one might be 0 or negative
+            g3y = max(data.revenue_growth_3y, 0.0)
+            g5y = max(data.revenue_growth_5y, 0.0)
+            
+            if g3y > 0 and g5y > 0:
+                # Weighted average: 60% weight on 3Y (more recent)
+                hist_growth = 0.6 * g3y + 0.4 * g5y
+            elif g3y > 0:
+                hist_growth = g3y
+            elif g5y > 0:
+                hist_growth = g5y
+            else:
+                hist_growth = 0.02  # Default floor
+            
             growth = min(hist_growth, MAX_GROWTH_RATE)
             growth = max(growth, 0.02)  # Floor at 2%
         
@@ -338,6 +425,12 @@ class DCFValuation:
         ])
         
         # Terminal Value (Gordon Growth)
+        # GUARD: Ensure wacc > terminal_growth to prevent division by zero or negative
+        if wacc <= terminal_growth:
+            # Invalid: terminal growth >= WACC makes Gordon Growth formula undefined
+            # Cap terminal_growth to maintain a minimum spread
+            terminal_growth = wacc - 0.01  # Minimum 1% spread
+        
         terminal_fcf = projected_fcf[-1] * (1 + terminal_growth)
         terminal_value = terminal_fcf / (wacc - terminal_growth)
         pv_terminal = terminal_value / ((1 + wacc) ** PROJECTION_YEARS)
@@ -348,12 +441,42 @@ class DCFValuation:
         return enterprise_value
     
     @staticmethod
-    def to_equity_value(enterprise_value: float, data: FinancialData) -> float:
-        """Convert enterprise value to equity value per share."""
+    def to_equity_value(enterprise_value: float, data: FinancialData, 
+                        current_price: Optional[float] = None) -> float:
+        """
+        Convert enterprise value to equity value per share.
+        
+        Parameters:
+        - current_price: If provided, used for sanity checking (optional)
+        
+        Returns:
+        - Per-share equity value, or 0.0 if invalid
+        """
+        # Handle zero or negative enterprise value
+        if enterprise_value <= 0:
+            return 0.0
+        
         equity_value = enterprise_value - data.total_debt + data.cash
         
+        # If equity value is negative (debt exceeds EV + cash), return 0
+        if equity_value <= 0:
+            return 0.0
+        
         if data.shares_outstanding > 0:
-            return equity_value / data.shares_outstanding
+            per_share = equity_value / data.shares_outstanding
+            
+            # Sanity check if current price provided
+            if current_price is not None and current_price > 0:
+                # Cap extreme values to prevent unrealistic outputs
+                upper_bound = current_price * DCF_UPPER_BOUND_MULTIPLIER
+                lower_bound = current_price * DCF_LOWER_BOUND_MULTIPLIER
+                
+                if per_share > upper_bound:
+                    # Very high valuation - cap it but still return a value
+                    per_share = min(per_share, upper_bound)
+                # Note: we don't raise the floor, just return 0 if truly invalid
+            
+            return per_share
         return 0.0
 
 
@@ -371,43 +494,69 @@ class MonteCarloValuation:
         
         Randomizes:
         - Revenue Growth ~ Normal(Base, 2%)
-        - EBIT Margin ~ Normal(Base, 1%)
+        - FCF Margin ~ Normal(Base, 1%) - NOW ACTUALLY USED!
         - WACC ~ Normal(Base, 0.5%)
         - Terminal Growth ~ Normal(2.5%, 0.2%)
+        
+        FCF for each simulation is computed as: Revenue × Margin
+        This creates meaningful variation in the valuation distribution.
         """
-        # Base parameters
-        base_growth = min(max(data.revenue_growth_3y, data.revenue_growth_5y, 0.02), MAX_GROWTH_RATE)
-        base_margin = max(data.ebit_margin, 0.05)  # Floor at 5%
+        # Check if we have valid data for simulation
+        if data.revenue <= 0:
+            # Cannot simulate without revenue
+            return np.array([])
+        
+        # Base parameters - use weighted average for growth
+        g3y = max(data.revenue_growth_3y, 0.0)
+        g5y = max(data.revenue_growth_5y, 0.0)
+        if g3y > 0 and g5y > 0:
+            base_growth = min(0.6 * g3y + 0.4 * g5y, MAX_GROWTH_RATE)
+        else:
+            base_growth = min(max(g3y, g5y, 0.02), MAX_GROWTH_RATE)
+        
+        # Use FCF margin if available, otherwise EBIT margin
+        if data.free_cash_flow > 0 and data.revenue > 0:
+            base_margin = data.free_cash_flow / data.revenue
+        elif data.ebit_margin > 0:
+            base_margin = data.ebit_margin * 0.75  # Approximate FCF margin from EBIT
+        else:
+            base_margin = 0.05  # Floor at 5%
+        
+        base_margin = max(base_margin, 0.01)  # Ensure positive
         base_wacc = data.wacc
         
         # Generate random parameters
         np.random.seed(42)  # For reproducibility
         
         growth_samples = np.random.normal(base_growth, 0.02, n_simulations)
-        margin_samples = np.random.normal(base_margin, 0.01, n_simulations)
+        margin_samples = np.random.normal(base_margin, 0.02, n_simulations)  # Increased std for more variation
         wacc_samples = np.random.normal(base_wacc, 0.005, n_simulations)
         terminal_samples = np.random.normal(TERMINAL_GROWTH_BASE, 0.002, n_simulations)
         
         # Clip to reasonable ranges
         growth_samples = np.clip(growth_samples, 0.0, 0.20)
-        margin_samples = np.clip(margin_samples, 0.01, 0.50)
+        margin_samples = np.clip(margin_samples, 0.01, 0.40)  # FCF margin between 1% and 40%
         wacc_samples = np.clip(wacc_samples, 0.04, 0.20)
         terminal_samples = np.clip(terminal_samples, 0.01, 0.04)
         
         # Ensure terminal < WACC
         terminal_samples = np.minimum(terminal_samples, wacc_samples - 0.01)
         
-        # Run simulations (vectorized)
+        # Run simulations - NOW USING MARGIN SAMPLES!
         fair_values = np.zeros(n_simulations)
         
         for i in range(n_simulations):
+            # Compute FCF for this simulation from Revenue × Margin
+            simulated_fcf = data.revenue * margin_samples[i]
+            
             ev = DCFValuation.calculate(
                 data,
                 growth_override=growth_samples[i],
                 wacc_override=wacc_samples[i],
-                terminal_growth_override=terminal_samples[i]
+                terminal_growth_override=terminal_samples[i],
+                fcf_override=simulated_fcf  # <-- NOW USING THE MARGIN!
             )
-            fair_values[i] = DCFValuation.to_equity_value(ev, data)
+            fair_values[i] = DCFValuation.to_equity_value(ev, data, data.current_price)
         
         # Remove any invalid values
         fair_values = fair_values[fair_values > 0]
@@ -451,7 +600,7 @@ class SensitivityAnalysis:
                     row.append(np.nan)  # Invalid combination
                     continue
                 ev = DCFValuation.calculate(data, wacc_override=wacc, terminal_growth_override=tg)
-                per_share = DCFValuation.to_equity_value(ev, data)
+                per_share = DCFValuation.to_equity_value(ev, data, data.current_price)
                 row.append(per_share)
             matrix.append(row)
         
@@ -889,12 +1038,23 @@ class ValuationEngine:
             print(f"   FCF: ${data.free_cash_flow/1e9:.2f}B")
             print(f"   Beta: {data.beta:.2f}")
             print(f"   WACC: {data.wacc*100:.2f}%")
+            
+            # Print data quality warnings
+            if data.missing_fields:
+                print(f"   ⚠️ Missing data: {', '.join(data.missing_fields[:5])}")
+                if len(data.missing_fields) > 5:
+                    print(f"      ... and {len(data.missing_fields) - 5} more fields")
+            if data.data_quality_warnings:
+                for warning in data.data_quality_warnings[:3]:
+                    print(f"   ⚠️ {warning}")
+                if len(data.data_quality_warnings) > 3:
+                    print(f"      ... and {len(data.data_quality_warnings) - 3} more warnings")
         
         # 2. Base DCF
         if verbose:
             print("\n2. Running DCF valuation...")
         result.dcf_value = DCFValuation.calculate(data)
-        result.dcf_per_share = DCFValuation.to_equity_value(result.dcf_value, data)
+        result.dcf_per_share = DCFValuation.to_equity_value(result.dcf_value, data, data.current_price)
         
         if verbose:
             print(f"   DCF Value: ${result.dcf_per_share:.2f} per share")

@@ -303,10 +303,18 @@ def scan_allocations(original_returns: pd.Series,
     }
 
 
-def find_sharpe_optimal(scan_data: Dict) -> Tuple[float, float]:
-    """Find allocation that maximizes Sharpe ratio."""
+def find_sharpe_optimal(scan_data: Dict) -> Tuple[float, float, bool]:
+    """
+    Find allocation that maximizes Sharpe ratio.
+    
+    Returns:
+        - optimal allocation
+        - Sharpe ratio at that allocation
+        - is_at_boundary: True if optimal is at max of scan range (suggests true optimal may be higher)
+    """
     idx = np.argmax(scan_data['sharpe'])
-    return scan_data['allocations'][idx], scan_data['sharpe'][idx]
+    is_at_boundary = (idx == len(scan_data['allocations']) - 1)
+    return scan_data['allocations'][idx], scan_data['sharpe'][idx], is_at_boundary
 
 
 def find_min_volatility(scan_data: Dict) -> Tuple[float, float]:
@@ -399,10 +407,12 @@ def optimize_allocation(ticker: str, name: str) -> OptimizationResult:
     print("\n3. Finding optimal allocations...")
     
     # Method 1: Sharpe Optimization
-    sharpe_alloc, sharpe_value = find_sharpe_optimal(scan_data)
+    sharpe_alloc, sharpe_value, sharpe_at_boundary = find_sharpe_optimal(scan_data)
     print(f"   📈 SHARPE OPTIMIZATION:")
     print(f"      Best Allocation: {sharpe_alloc*100:.1f}%")
     print(f"      Sharpe Ratio: {sharpe_value:.3f} (vs {orig_sharpe:.3f} original)")
+    if sharpe_at_boundary:
+        print(f"      ⚠️  WARNING: Optimal is at {MAX_ALLOCATION*100:.0f}% cap - true optimal may be higher")
     
     # Method 2: Minimum Volatility (Risk Budgeting)
     minvol_alloc, min_vol = find_min_volatility(scan_data)
