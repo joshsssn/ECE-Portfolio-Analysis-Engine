@@ -1,2 +1,0 @@
-Ticker,Name,Sharpe Optimal (%),Min Vol Optimal (%),Recommended (%),Method,Original Sharpe,New Sharpe,Original Vol (%),New Vol (%)
-JNJ,Johnson & Johnson,23.0%,25.0%,23.0%,Sharpe Optimization,0.788,0.823,15.82%,13.69%

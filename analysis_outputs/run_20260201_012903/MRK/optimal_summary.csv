@@ -1,2 +1,0 @@
-Ticker,Name,Sharpe Optimal (%),Min Vol Optimal (%),Recommended (%),Method,Original Sharpe,New Sharpe,Original Vol (%),New Vol (%)
-MRK,Merck & Co. Inc.,21.9%,25.0%,21.9%,Sharpe Optimization,0.788,0.858,15.82%,14.24%

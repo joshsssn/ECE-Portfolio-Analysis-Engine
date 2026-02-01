@@ -1,2 +1,0 @@
-Ticker,Name,Sharpe Optimal (%),Min Vol Optimal (%),Recommended (%),Method,Original Sharpe,New Sharpe,Original Vol (%),New Vol (%)
-LLY,Eli Lilly and Company,25.0%,10.2%,25.0%,Sharpe Optimization,0.788,1.190,15.82%,16.17%

@@ -1,2 +1,0 @@
-Ticker,Name,Sharpe Optimal (%),Min Vol Optimal (%),Recommended (%),Method,Original Sharpe,New Sharpe,Original Vol (%),New Vol (%)
-AMGN,Amgen Inc.,14.3%,24.0%,14.3%,Sharpe Optimization,0.788,0.811,15.82%,14.91%
