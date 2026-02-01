@@ -1,4 +1,6 @@
 """
+ECE Portfolio Analysis Engine
+=============================
 Run Analysis from Screener CSV
 ==============================
 Reads a screener CSV file and runs the full analysis pipeline

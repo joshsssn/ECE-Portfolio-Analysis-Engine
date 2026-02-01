@@ -1,4 +1,6 @@
 """
+ECE Portfolio Analysis Engine
+=============================
 Master Analysis Orchestrator
 =============================
 Single entry point to run the full analysis pipeline:

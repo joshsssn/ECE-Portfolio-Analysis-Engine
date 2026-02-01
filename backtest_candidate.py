@@ -1,4 +1,6 @@
 """
+ECE Portfolio Analysis Engine
+=============================
 Backtest Candidate Stock Analysis
 ==================================
 Analyze the impact of adding a candidate stock to the reconstructed portfolio.

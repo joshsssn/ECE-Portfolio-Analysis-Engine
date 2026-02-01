@@ -1,4 +1,6 @@
 """
+ECE Portfolio Analysis Engine
+=============================
 Valuation Engine - State of the Art Stock Valuation
 ====================================================
 Comprehensive valuation tool using DCF + Monte Carlo simulation.

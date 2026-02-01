@@ -1,4 +1,4 @@
-# Portfolio Analysis Engine - Complete Documentation
+# ECE Portfolio Analysis Engine - Complete Documentation
 
 > **Author:** Josh E. SOUSSAN
 > **V1:** 01/02/2026

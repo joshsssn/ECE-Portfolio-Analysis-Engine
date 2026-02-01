@@ -1,4 +1,6 @@
 """
+ECE Portfolio Analysis Engine
+=============================
 Optimal Allocation Finder
 =========================
 Automatically finds the optimal allocation for a candidate stock using:
