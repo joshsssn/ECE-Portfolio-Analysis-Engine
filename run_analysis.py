@@ -309,9 +309,14 @@ class AnalysisOrchestrator:
             try:
                 dcf_result, rel_result = engine.analyze_full(ticker, verbose=True)
                 
+                # Get financial data for this ticker to capture missing fields
+                financial_data = engine.financial_data.get(ticker)
+                
                 self.valuation_results[ticker] = {
                     'dcf': dcf_result,
-                    'relative': rel_result
+                    'relative': rel_result,
+                    'missing_fields': financial_data.missing_fields if financial_data else [],
+                    'data_warnings': financial_data.data_quality_warnings if financial_data else [],
                 }
                 
                 # Get stock-specific output folder
@@ -386,6 +391,14 @@ class AnalysisOrchestrator:
                 if rel and rel.is_valid:
                     row['P/E Discount'] = f"{rel.pe_discount_pct:+.1f}%"
                     row['EV/EBITDA Discount'] = f"{rel.ev_discount_pct:+.1f}%"
+                
+                # Add data quality info
+                missing = val.get('missing_fields', [])
+                warnings = val.get('data_warnings', [])
+                if missing:
+                    row['Missing Data'] = ', '.join(missing[:3]) + ('...' if len(missing) > 3 else '')
+                if warnings:
+                    row['Data Warnings'] = ', '.join(warnings[:2]) + ('...' if len(warnings) > 2 else '')
             
             summary_rows.append(row)
         
@@ -436,6 +449,10 @@ class AnalysisOrchestrator:
             lines.append(f"    Win Probability: {row.get('Win Probability', 'N/A')}")
             if 'BT: Sharpe Impact' in row:
                 lines.append(f"    Backtest Sharpe Impact: {row.get('BT: Sharpe Impact', 'N/A')}")
+            if 'Missing Data' in row and row['Missing Data']:
+                lines.append(f"    ⚠️ Missing Data: {row['Missing Data']}")
+            if 'Data Warnings' in row and row['Data Warnings']:
+                lines.append(f"    ⚠️ Data Issues: {row['Data Warnings']}")
         
         lines.extend([
             "",

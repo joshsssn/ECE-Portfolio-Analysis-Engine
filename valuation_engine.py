@@ -184,18 +184,51 @@ class DataFetcher:
                         revenues = income.loc['Total Revenue'].dropna().values
                         if len(revenues) > 0:
                             data.revenue = revenues[0]
+                            
+                            # Calculate growth from annual data
                             if len(revenues) >= 4:
                                 data.revenue_growth_3y = DataFetcher._calculate_cagr(
                                     revenues[-1], revenues[0], min(3, len(revenues)-1)
                                 )
-                            else:
-                                data.missing_fields.append('revenue_growth_3y (insufficient history)')
+                            
                             if len(revenues) >= 5:
                                 data.revenue_growth_5y = DataFetcher._calculate_cagr(
                                     revenues[-1], revenues[0], min(5, len(revenues)-1)
                                 )
                             else:
-                                data.missing_fields.append('revenue_growth_5y (insufficient history)')
+                                # FALLBACK 1: Try quarterly data for 5Y growth
+                                try:
+                                    quarterly = stock.quarterly_financials
+                                    if not quarterly.empty and 'Total Revenue' in quarterly.index:
+                                        q_revenues = quarterly.loc['Total Revenue'].dropna().values
+                                        # Need ~20 quarters for 5Y
+                                        if len(q_revenues) >= 16:  # At least 4Y of quarters
+                                            years_span = len(q_revenues) / 4
+                                            data.revenue_growth_5y = DataFetcher._calculate_cagr(
+                                                q_revenues[-1], q_revenues[0], years_span
+                                            )
+                                            data.data_quality_warnings.append(f'5Y growth from {len(q_revenues)} quarters')
+                                except Exception:
+                                    pass
+                            
+                            # FALLBACK 2: Use yfinance info fields
+                            if data.revenue_growth_5y == 0:
+                                # Try revenueGrowth from info (this is typically trailing)
+                                yf_growth = info.get('revenueGrowth')
+                                if yf_growth and yf_growth > 0:
+                                    data.revenue_growth_5y = yf_growth
+                                    data.data_quality_warnings.append('5Y growth from yfinance revenueGrowth')
+                            
+                            # FALLBACK 3: Use 3Y growth as proxy for 5Y
+                            if data.revenue_growth_5y == 0 and data.revenue_growth_3y > 0:
+                                data.revenue_growth_5y = data.revenue_growth_3y * 0.9  # Slightly dampen for conservatism
+                                data.data_quality_warnings.append('5Y growth estimated from 3Y (0.9x)')
+                            
+                            # If still missing after all fallbacks, flag it
+                            if data.revenue_growth_5y == 0:
+                                data.missing_fields.append('revenue_growth_5y (all fallbacks failed)')
+                            if data.revenue_growth_3y == 0:
+                                data.missing_fields.append('revenue_growth_3y (insufficient history)')
                         else:
                             data.missing_fields.append('revenue')
                     else:
