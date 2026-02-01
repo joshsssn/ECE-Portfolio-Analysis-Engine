@@ -1,8 +1,9 @@
-Thèse : Secteur défensif par excellence, décorrélé de la Tech, mais avec de la croissance structurelle (vieillissement).
-Critères de Screening :
-Secteur : Healthcare (Pharma, MedTech, Services).
-Market Cap : > $20B (Large Cap pour la liquidité).
-Beta < 0.8 (Faible volatilité).
-Revenue Growth 5y > 5% (Pas de sociétés mourantes).
-ROIC > 10% (Qualité du capital).
-FCF positif
+Thesis: Defensive sector par excellence, decorrelated from Tech, but with structural growth (aging population).
+
+Screening Criteria:
+- Sector: Healthcare (Pharma, MedTech, Services)
+- Market Cap: > $20B (Large Cap for liquidity)
+- Beta < 0.8 (Low volatility)
+- Revenue Growth 5y > 5% (No dying companies)
+- ROIC > 10% (Quality of capital)
+- Positive FCF
