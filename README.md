@@ -95,7 +95,7 @@ python run_from_screener.py --skip-optimal --skip-backtest
 | `--skip-backtest`  | Skip backtesting                                        |
 | `--skip-valuation` | Skip valuation engine                                   |
 | `--only-valuation` | Only run valuation (quick mode)                         |
-| `--multi-alloc`, `-m` | Run multi-allocation analysis (0.5% granularity)    |
+| `--multi-alloc`, `-m` | Run multi-allocation analysis (optional: step % e.g. 0.5) |
 | `--all`            | Analyze all stocks in screener (default: 10)            |
 
 ### ⚠️ Screener Filtering Recommendations
@@ -136,19 +136,22 @@ Generate **comprehensive metrics at 0.5% allocation granularity** from 0.5% to t
 ### Standalone Usage
 
 ```bash
-# Run for a single ticker
+# Run for a single ticker (default 0.5% step)
 python run_multi_allocation.py COR "Cencora Inc."
-python run_multi_allocation.py JNJ "Johnson & Johnson"
+
+# Run with custom step (e.g., 1.0%)
+python run_multi_allocation.py COR "Cencora Inc." 1.0
 ```
 
 ### Batch Usage (via Screener)
 
 ```bash
-# Run multi-allocation for all stocks in screener
+# Run multi-allocation (default 0.5% step)
 python run_from_screener.py --multi-alloc --top 5
 
-# Combined with other options
-python run_from_screener.py --csv my_screener.csv --multi-alloc --skip-valuation
+# Run with custom granularity (e.g., 0.25% step)
+# Note: Smaller steps = longer runtime!
+python run_from_screener.py --multi-alloc 0.25 --top 5
 ```
 
 ### Output

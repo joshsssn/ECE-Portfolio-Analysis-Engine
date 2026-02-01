@@ -4,8 +4,8 @@ Multi-Allocation Metrics Generator
 Takes a ticker as input, finds optimal allocation using optimal_allocation.py,
 then computes backtest metrics at 0.5% granularity from 0% to optimal allocation.
 
-Usage: python run_multi_allocation.py <TICKER> [STOCK_NAME]
-Example: python run_multi_allocation.py COR "Cencora Inc."
+Usage: python run_multi_allocation.py <TICKER> [STOCK_NAME] [GRANULARITY_PCT]
+Example: python run_multi_allocation.py COR "Cencora Inc." 0.5
 """
 import pandas as pd
 import numpy as np
@@ -18,20 +18,21 @@ sys.path.insert(0, '.')
 from optimal_allocation import optimize_allocation
 from backtest_candidate import run_backtest
 
-def run_multi_allocation_analysis(ticker: str, name: str = None):
+def run_multi_allocation_analysis(ticker: str, name: str = None, granularity: float = 0.005):
     """
     Run multi-allocation analysis for a given ticker.
     
     1. Find optimal allocation using optimize_allocation()
-    2. Generate allocations from 0.5% to optimal at 0.5% granularity
+    2. Generate allocations (default 0.5% granularity) from minimal to optimal
     3. Run backtest at each allocation level
     4. Save master CSV with all metrics
     """
     if name is None:
         name = ticker
     
+    gran_pct = granularity * 100
     print("="*70)
-    print(f"MULTI-ALLOCATION ANALYSIS: {name} ({ticker})")
+    print(f"MULTI-ALLOCATION ANALYSIS: {name} ({ticker}) - {gran_pct:.2f}% Step")
     print("="*70)
     
     # Step 1: Find optimal allocation
@@ -44,20 +45,20 @@ def run_multi_allocation_analysis(ticker: str, name: str = None):
         print(f"   ✗ Error finding optimal allocation: {e}")
         return None
     
-    # Step 2: Generate allocation levels at 0.5% granularity
-    print("\n[STEP 2] Generating allocation levels (0.5% granularity)...")
+    # Step 2: Generate allocation levels
+    print(f"\n[STEP 2] Generating allocation levels ({gran_pct:.2f}% granularity)...")
     
-    # Start from 0.5% (0.005), go up to optimal allocation (rounded up to nearest 0.5%)
-    max_alloc = np.ceil(optimal_alloc * 200) / 200  # Round up to nearest 0.5%
-    allocations = np.arange(0.005, max_alloc + 0.001, 0.005)  # 0.5% = 0.005
-    allocations = [round(a, 4) for a in allocations if a <= max_alloc + 0.001]
+    # Start from granularity, go up to optimal allocation (rounded up to nearest step)
+    max_alloc = np.ceil(optimal_alloc / granularity) * granularity
+    allocations = np.arange(granularity, max_alloc + 0.000001, granularity)
+    allocations = [round(a, 4) for a in allocations if a <= max_alloc + 0.000001]
     
     # Add the exact optimal allocation if not already included
     if optimal_alloc not in allocations:
         allocations.append(optimal_alloc)
         allocations = sorted(allocations)
     
-    print(f"   Testing {len(allocations)} allocation levels: {allocations[0]*100:.1f}% to {allocations[-1]*100:.1f}%")
+    print(f"   Testing {len(allocations)} allocation levels: {allocations[0]*100:.2f}% to {allocations[-1]*100:.2f}%")
     
     # Step 3: Run backtest at each allocation level
     print("\n[STEP 3] Running backtests...")
@@ -157,12 +158,21 @@ def run_multi_allocation_analysis(ticker: str, name: str = None):
 if __name__ == "__main__":
     # Parse command line arguments
     if len(sys.argv) < 2:
-        print("Usage: python run_multi_allocation.py <TICKER> [STOCK_NAME]")
-        print("Example: python run_multi_allocation.py COR \"Cencora Inc.\"")
+        print("Usage: python run_multi_allocation.py <TICKER> [STOCK_NAME] [GRANULARITY_PCT]")
+        print("Example: python run_multi_allocation.py COR \"Cencora Inc.\" 0.5")
         sys.exit(1)
     
     ticker = sys.argv[1].upper()
     name = sys.argv[2] if len(sys.argv) > 2 else ticker
     
+    # Check for granularity argument (3rd arg, or if 2nd arg looks like a number and not name)
+    granularity = 0.005
+    if len(sys.argv) > 3:
+        try:
+            val = float(sys.argv[3])
+            granularity = val / 100.0
+        except ValueError:
+            pass
+    
     # Run analysis
-    run_multi_allocation_analysis(ticker, name)
+    run_multi_allocation_analysis(ticker, name, granularity)

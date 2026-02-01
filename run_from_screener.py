@@ -109,17 +109,26 @@ def screener_to_candidates(df: pd.DataFrame, top_n: int = None) -> list:
 # MAIN EXECUTION
 # =============================================================================
 
-def run_multi_allocation_for_screener(candidates: list, output_dir: Path):
+def run_multi_allocation_for_screener(candidates: list, output_dir: Path, granularity: float = 0.005):
     """
     Run multi-allocation analysis for all stocks in the screener.
-    Generates 0.5% granularity metrics from 0.5% to optimal allocation.
+    
+    Parameters
+    ----------
+    candidates : list
+        List of candidate stocks
+    output_dir : Path
+        Output directory
+    granularity : float
+        Allocation step size (default 0.005 = 0.5%)
     """
     import numpy as np
     from optimal_allocation import optimize_allocation
     from backtest_candidate import run_backtest
     
+    gran_pct = granularity * 100
     print("\n" + "="*70)
-    print("MULTI-ALLOCATION ANALYSIS (0.5% GRANULARITY)")
+    print(f"MULTI-ALLOCATION ANALYSIS ({gran_pct:.1f}% GRANULARITY)")
     print("="*70)
     
     for candidate in candidates:
@@ -138,9 +147,9 @@ def run_multi_allocation_for_screener(candidates: list, output_dir: Path):
             print(f"         Optimal: {optimal_alloc*100:.1f}%")
             
             # Step 2: Generate allocation levels
-            max_alloc = np.ceil(optimal_alloc * 200) / 200
-            allocations = np.arange(MULTI_ALLOC_STEP, max_alloc + 0.001, MULTI_ALLOC_STEP)
-            allocations = [round(a, 4) for a in allocations if a <= max_alloc + 0.001]
+            max_alloc = np.ceil(optimal_alloc / granularity) * granularity
+            allocations = np.arange(granularity, max_alloc + 0.0001, granularity)
+            allocations = [round(a, 4) for a in allocations if a <= max_alloc + 0.0001]
             if optimal_alloc not in allocations:
                 allocations.append(optimal_alloc)
                 allocations = sorted(allocations)
@@ -196,7 +205,7 @@ def run_from_screener(csv_path: str,
                       run_optimal: bool = True,
                       run_backtests: bool = True,
                       run_valuations: bool = True,
-                      run_multi_alloc: bool = False):
+                      multi_alloc_granularity: float = None):
     """
     Main function: load screener CSV and run full analysis.
     
@@ -214,8 +223,8 @@ def run_from_screener(csv_path: str,
         Run backtests
     run_valuations : bool
         Run valuation engine
-    run_multi_alloc : bool
-        Run multi-allocation analysis (0.5% granularity)
+    multi_alloc_granularity : float, optional
+        If set, run multi-allocation analysis with this granularity (e.g. 0.005 = 0.5%)
     """
     from run_analysis import AnalysisOrchestrator, OUTPUT_BASE
     
@@ -254,8 +263,8 @@ def run_from_screener(csv_path: str,
     )
     
     # Run multi-allocation analysis if requested
-    if run_multi_alloc:
-        run_multi_allocation_for_screener(candidates, output_dir)
+    if multi_alloc_granularity is not None:
+        run_multi_allocation_for_screener(candidates, output_dir, multi_alloc_granularity)
     
     # Copy screener to output for reference
     screener_copy_path = output_dir / 'input_screener.csv'
@@ -336,8 +345,12 @@ Examples:
     
     parser.add_argument(
         '--multi-alloc', '-m',
-        action='store_true',
-        help='Run multi-allocation analysis (0.5%% granularity from 0%% to optimal)'
+        type=float,
+        nargs='?',
+        const=0.5,
+        default=None,
+        metavar='STEP',
+        help='Run multi-allocation analysis with STEP%% granularity (default: 0.5%% if no value given)'
     )
     
     args = parser.parse_args()
@@ -363,6 +376,12 @@ Examples:
     else:
         top_n = MAX_STOCKS  # Default
     
+    # Determine multi-alloc granularity (convert from % to decimal)
+    multi_alloc_granularity = None
+    if args.multi_alloc is not None:
+        multi_alloc_granularity = args.multi_alloc / 100  # Convert 0.5 -> 0.005
+        print(f"\n📊 Multi-allocation analysis enabled: {args.multi_alloc}% granularity")
+    
     # Run
     orchestrator, output_dir = run_from_screener(
         csv_path=args.csv,
@@ -371,7 +390,7 @@ Examples:
         run_optimal=run_optimal,
         run_backtests=run_backtests,
         run_valuations=run_valuations,
-        run_multi_alloc=args.multi_alloc
+        multi_alloc_granularity=multi_alloc_granularity
     )
     
     return orchestrator
