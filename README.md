@@ -11,7 +11,7 @@
 A comprehensive **Python-based portfolio analysis platform** that combines:
 
 1. **Portfolio Reconstruction** - Rebuilds full portfolio from partial holdings + ETF proxies
-2. **Optimal Allocation Finder** - Automatically finds best allocation via Sharpe Optimization + Risk Budgeting (MCTR)
+2. **Optimal Allocation Finder** - Finds best allocation via Mean-Variance Utility Maximization
 3. **Candidate Backtesting** - Simulates adding new stocks to measure risk/return impact
 4. **Valuation Engine** - DCF + Monte Carlo + Relative Valuation with regression analysis
 
@@ -49,7 +49,7 @@ All orchestrated via a single script that outputs organized results to timestamp
 | [run_analysis.py](file:///c:/Users/Joshs/Desktop/BI/ECE/run_analysis.py)                         | ~500  | Master orchestrator - runs all 4 modules |
 | [run_from_screener.py](file:///c:/Users/Joshs/Desktop/BI/ECE/run_from_screener.py)               | ~200  | Analyze screener CSV                     |
 | [portfolio_reconstruction.py](file:///c:/Users/Joshs/Desktop/BI/ECE/portfolio_reconstruction.py) | ~760  | Portfolio weights + risk metrics         |
-| [optimal_allocation.py](file:///c:/Users/Joshs/Desktop/BI/ECE/optimal_allocation.py)             | ~550  | Sharpe + MCTR optimization               |
+| [optimal_allocation.py](file:///c:/Users/Joshs/Desktop/BI/ECE/optimal_allocation.py)             | ~700  | Mean-Variance Utility optimization       |
 | [backtest_candidate.py](file:///c:/Users/Joshs/Desktop/BI/ECE/backtest_candidate.py)             | ~680  | Pro-forma portfolio impact analysis      |
 | [valuation_engine.py](file:///c:/Users/Joshs/Desktop/BI/ECE/valuation_engine.py)                 | ~1100 | DCF + Monte Carlo + Relative Valuation   |
 
@@ -193,49 +193,53 @@ Any gap between target weight and Top 10 is filled with iShares Global ETFs:
 
 ### Purpose
 
-**Automatically find the best allocation** for a candidate stock using two scientific approaches.
+**Automatically find the best allocation** for a candidate stock using **Mean-Variance Utility Maximization**.
 
-### Method 1: Sharpe Ratio Optimization
+### Primary Method: Mean-Variance Utility
 
-Scan allocations from 0% to 25% and find the point that **maximizes Sharpe Ratio**.
+The allocation is chosen by maximizing the utility function:
 
-```python
-# Scans 50 allocation levels
-for allocation in np.linspace(0, 0.25, 50):
-    blended = (1 - allocation) * portfolio + allocation * candidate
-    sharpe = calculate_sharpe(blended)
-# Find argmax(sharpe)
-```
+$$U = E[R] - \frac{\lambda}{2} \times \sigma^2$$
 
-### Method 2: Risk Budgeting (MCTR)
-
-Uses **Marginal Contribution to Risk** to find where adding more starts increasing volatility:
+Where:
+- **E[R]** = Expected annualized return
+- **σ** = Annualized volatility
+- **λ** = Risk aversion coefficient (configurable)
 
 ```python
-MCTR = d(Portfolio_Vol) / d(Allocation)
+# Configure risk profile in optimal_allocation.py
+RISK_AVERSION = 3.0  # Default: moderate investor
 
-# If MCTR < 0: Adding more REDUCES risk (diversification benefit)
-# If MCTR > 0: Adding more INCREASES risk (concentration effect)
-# Optimal = Zero crossing point
+# Interpretation:
+# λ = 1-2: Aggressive (maximize return, accept volatility)
+# λ = 3-5: Moderate (balanced risk/return)
+# λ = 6-10: Conservative (minimize volatility, accept lower return)
 ```
+
+### Reference Methods (for comparison)
+
+| Method | Description | When λ → |
+|--------|-------------|----------|
+| **Sharpe Optimization** | Maximize Sharpe Ratio | 0 (aggressive) |
+| **Min Volatility** | Minimize portfolio volatility | ∞ (conservative) |
 
 ### Visualization (4-panel)
 
-1. **Sharpe Curve** - Find maximum
-2. **Volatility Curve** - Find minimum
-3. **MCTR Chart** - Green = risk-reducing, Red = risk-increasing
+1. **Sharpe Curve** - Find maximum (reference)
+2. **Volatility Curve** - Find minimum (reference)
+3. **Utility Curve** - Find maximum (**primary method**)
 4. **Efficient Frontier** - Risk vs Return with color = Sharpe
 
 ### Sample Output
 
 ```text
-   📈 SHARPE OPTIMIZATION:       0.0% (no improvement)
-   📊 RISK BUDGETING:           14.8% (min volatility)
-   ⚖️  MCTR ANALYSIS:           14.6% (risk-neutral point)
+   📈 SHARPE OPTIMIZATION (reference):   25.0%
+   📊 MIN VOLATILITY (reference):        12.3%
+   🎯 MEAN-VARIANCE UTILITY (λ=3.0):     18.4%
 
-   ✅ RECOMMENDED: 14.6% via Risk Budgeting
+   ✅ RECOMMENDED: 18.4% via Mean-Variance Utility (λ=3.0)
    
-   Volatility: 15.82% → 14.98% (-0.84%)
+   Utility: 12.71% → 13.45% (+0.74%)
 ```
 
 ---

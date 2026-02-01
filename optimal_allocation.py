@@ -4,8 +4,15 @@ ECE Portfolio Analysis Engine
 Optimal Allocation Finder
 =========================
 Automatically finds the optimal allocation for a candidate stock using:
-1. Sharpe Ratio Optimization - Find allocation that maximizes risk-adjusted return
-2. Risk Budgeting (MCTR) - Find allocation where marginal risk contribution is optimal
+1. Mean-Variance Utility Maximization - Primary method with configurable risk aversion (λ)
+2. Sharpe Ratio Optimization - Reference (λ→0 asymptotic case)
+3. Minimum Volatility - Reference (λ→∞ asymptotic case)
+
+The utility function is: U = E[R] - (λ/2) × σ²
+Where λ (RISK_AVERSION) controls the investor profile:
+  - λ = 1-2: Aggressive (closer to Max Sharpe)
+  - λ = 3-5: Moderate (balanced)
+  - λ = 6-10: Conservative (closer to Min Volatility)
 
 Author: Josh E. SOUSSAN
 Usage: python optimal_allocation.py
@@ -39,6 +46,11 @@ ALLOCATION_STEPS = 50  # Granularity
 
 # Risk-free rate
 RISK_FREE_RATE = 0.04
+
+# Risk aversion parameter for Mean-Variance Utility
+# Higher = more conservative (closer to MinVol), Lower = more aggressive (closer to MaxSharpe)
+# Typical values: 1-2 (aggressive), 3-5 (moderate), 6-10 (conservative)
+RISK_AVERSION = 3.0
 
 # Data parameters
 LOOKBACK_YEARS = 5
@@ -111,6 +123,11 @@ class OptimizationResult:
     risk_budget_optimal_allocation: float
     min_volatility: float
     
+    # Utility optimization
+    utility_optimal_allocation: float
+    utility_optimal_value: float
+    risk_aversion: float
+    
     # Combined recommendation
     recommended_allocation: float
     recommendation_method: str
@@ -119,21 +136,25 @@ class OptimizationResult:
     original_sharpe: float
     original_volatility: float
     original_return: float
+    original_utility: float
     
     # At recommended allocation
     new_sharpe: float
     new_volatility: float
     new_return: float
+    new_utility: float
     
     # Improvement
     sharpe_improvement: float
     vol_reduction: float
+    utility_improvement: float
     
     # Scan data for plotting
     allocation_range: np.ndarray = None
     sharpe_curve: np.ndarray = None
     volatility_curve: np.ndarray = None
     return_curve: np.ndarray = None
+    utility_curve: np.ndarray = None
     mctr_curve: np.ndarray = None
 
 
@@ -232,6 +253,25 @@ def calculate_metrics(returns: pd.Series, risk_free: float = 0.04,
     return ann_return, ann_vol, sharpe
 
 
+def calculate_utility(returns: pd.Series, risk_aversion: float = 3.0,
+                      risk_free: float = 0.04, periods_per_year: int = 52) -> float:
+    """
+    Calculate Mean-Variance Utility.
+    
+    U = E[R] - (λ/2) * σ²
+    
+    Where:
+        E[R] = Expected (annualized) return
+        λ = Risk aversion coefficient
+        σ = Annualized volatility
+    
+    Higher utility = better risk-adjusted performance for given risk preference.
+    """
+    ann_return, ann_vol, _ = calculate_metrics(returns, risk_free, periods_per_year)
+    utility = ann_return - (risk_aversion / 2) * (ann_vol ** 2)
+    return utility
+
+
 def construct_blended_portfolio(original_returns: pd.Series, 
                                  candidate_returns: pd.Series,
                                  allocation: float) -> pd.Series:
@@ -282,16 +322,19 @@ def scan_allocations(original_returns: pd.Series,
     sharpe_values = []
     vol_values = []
     return_values = []
+    utility_values = []
     mctr_values = []
     
     for alloc in allocations:
         blended = construct_blended_portfolio(original_returns, candidate_returns, alloc)
         ann_ret, ann_vol, sharpe = calculate_metrics(blended)
+        utility = calculate_utility(blended, RISK_AVERSION)
         mctr = calculate_mctr(original_returns, candidate_returns, alloc)
         
         sharpe_values.append(sharpe)
         vol_values.append(ann_vol * 100)  # Convert to percentage
         return_values.append(ann_ret * 100)
+        utility_values.append(utility * 100)  # Convert to percentage for display
         mctr_values.append(mctr * 100)  # Convert to percentage points
     
     return {
@@ -299,6 +342,7 @@ def scan_allocations(original_returns: pd.Series,
         'sharpe': np.array(sharpe_values),
         'volatility': np.array(vol_values),
         'returns': np.array(return_values),
+        'utility': np.array(utility_values),
         'mctr': np.array(mctr_values),
     }
 
@@ -321,6 +365,12 @@ def find_min_volatility(scan_data: Dict) -> Tuple[float, float]:
     """Find allocation that minimizes volatility (Risk Budgeting approach)."""
     idx = np.argmin(scan_data['volatility'])
     return scan_data['allocations'][idx], scan_data['volatility'][idx]
+
+
+def find_utility_optimal(scan_data: Dict) -> Tuple[float, float]:
+    """Find allocation that maximizes Mean-Variance Utility."""
+    idx = np.argmax(scan_data['utility'])
+    return scan_data['allocations'][idx], scan_data['utility'][idx]
 
 
 def find_mctr_zero_crossing(scan_data: Dict) -> float:
@@ -406,42 +456,40 @@ def optimize_allocation(ticker: str, name: str) -> OptimizationResult:
     # Find optima
     print("\n3. Finding optimal allocations...")
     
-    # Method 1: Sharpe Optimization
+    # Method 1: Sharpe Optimization (for reference)
     sharpe_alloc, sharpe_value, sharpe_at_boundary = find_sharpe_optimal(scan_data)
-    print(f"   📈 SHARPE OPTIMIZATION:")
+    print(f"   📈 SHARPE OPTIMIZATION (reference):")
     print(f"      Best Allocation: {sharpe_alloc*100:.1f}%")
     print(f"      Sharpe Ratio: {sharpe_value:.3f} (vs {orig_sharpe:.3f} original)")
     if sharpe_at_boundary:
         print(f"      ⚠️  WARNING: Optimal is at {MAX_ALLOCATION*100:.0f}% cap - true optimal may be higher")
     
-    # Method 2: Minimum Volatility (Risk Budgeting)
+    # Method 2: Minimum Volatility (for reference)
     minvol_alloc, min_vol = find_min_volatility(scan_data)
-    print(f"\n   📊 RISK BUDGETING (Min Volatility):")
+    print(f"\n   📊 MIN VOLATILITY (reference):")
     print(f"      Best Allocation: {minvol_alloc*100:.1f}%")
     print(f"      Portfolio Vol: {min_vol:.2f}% (vs {orig_vol*100:.2f}% original)")
     
-    # Method 3: MCTR Zero Crossing
-    mctr_alloc = find_mctr_zero_crossing(scan_data)
-    print(f"\n   ⚖️  MCTR ANALYSIS (Marginal Risk Contribution):")
-    print(f"      Risk-Neutral Allocation: {mctr_alloc*100:.1f}%")
-    print(f"      (Beyond this, adding more increases risk)")
+    # Method 3: Mean-Variance Utility (PRIMARY METHOD)
+    utility_alloc, utility_value = find_utility_optimal(scan_data)
+    orig_utility = calculate_utility(original_returns, RISK_AVERSION)
+    print(f"\n   🎯 MEAN-VARIANCE UTILITY (λ={RISK_AVERSION}):")
+    print(f"      Best Allocation: {utility_alloc*100:.1f}%")
+    print(f"      Utility: {utility_value:.2f}% (vs {orig_utility*100:.2f}% original)")
+    print(f"      (λ=1-2: aggressive, 3-5: moderate, 6-10: conservative)")
     
-    # Combined recommendation
+    # Combined recommendation: Use Utility Maximization as primary method
     print("\n4. Generating recommendation...")
     
-    # Priority: If Sharpe improves and allocation is reasonable, use Sharpe
-    # Otherwise, use MCTR as the risk-conscious choice
-    if sharpe_value > orig_sharpe * 1.01:  # At least 1% Sharpe improvement
-        recommended = sharpe_alloc
-        method = "Sharpe Optimization"
-    else:
-        # Use the more conservative of minvol and mctr
-        recommended = min(minvol_alloc, mctr_alloc) if mctr_alloc > 0 else minvol_alloc
-        method = "Risk Budgeting"
+    recommended = utility_alloc
+    method = f"Mean-Variance Utility (λ={RISK_AVERSION})"
     
     # Calculate metrics at recommended allocation
     blended = construct_blended_portfolio(original_returns, candidate_returns, recommended)
     new_ret, new_vol, new_sharpe = calculate_metrics(blended)
+    
+    # Calculate new utility at recommended allocation
+    new_utility = calculate_utility(blended, RISK_AVERSION)
     
     # Create result
     result = OptimizationResult(
@@ -451,20 +499,27 @@ def optimize_allocation(ticker: str, name: str) -> OptimizationResult:
         sharpe_optimal_value=sharpe_value,
         risk_budget_optimal_allocation=minvol_alloc,
         min_volatility=min_vol,
+        utility_optimal_allocation=utility_alloc,
+        utility_optimal_value=utility_value,
+        risk_aversion=RISK_AVERSION,
         recommended_allocation=recommended,
         recommendation_method=method,
         original_sharpe=orig_sharpe,
         original_volatility=orig_vol * 100,
         original_return=orig_ret * 100,
+        original_utility=orig_utility * 100,
         new_sharpe=new_sharpe,
         new_volatility=new_vol * 100,
         new_return=new_ret * 100,
+        new_utility=new_utility * 100,
         sharpe_improvement=(new_sharpe - orig_sharpe) / orig_sharpe * 100,
         vol_reduction=(orig_vol - new_vol) / orig_vol * 100 * 100,
+        utility_improvement=(new_utility - orig_utility) / abs(orig_utility) * 100 if orig_utility != 0 else 0,
         allocation_range=scan_data['allocations'],
         sharpe_curve=scan_data['sharpe'],
         volatility_curve=scan_data['volatility'],
         return_curve=scan_data['returns'],
+        utility_curve=scan_data['utility'],
         mctr_curve=scan_data['mctr'],
     )
     
@@ -511,17 +566,17 @@ def plot_optimization(result: OptimizationResult, save_path: str = None):
     ax2.legend(loc='best')
     ax2.grid(True, alpha=0.3)
     
-    # 3. MCTR Curve
+    # 3. Utility Curve (Mean-Variance)
     ax3 = axes[1, 0]
-    ax3.plot(alloc_pct, result.mctr_curve, 'purple', linewidth=2, label='MCTR')
-    ax3.axhline(y=0, color='black', linestyle='-', linewidth=1)
-    ax3.fill_between(alloc_pct, result.mctr_curve, 0, 
-                     where=result.mctr_curve < 0, alpha=0.3, color='green', label='Risk-Reducing')
-    ax3.fill_between(alloc_pct, result.mctr_curve, 0, 
-                     where=result.mctr_curve >= 0, alpha=0.3, color='red', label='Risk-Increasing')
+    ax3.plot(alloc_pct, result.utility_curve, 'purple', linewidth=2, label=f'Utility (λ={result.risk_aversion})')
+    ax3.axhline(y=result.original_utility, color='gray', linestyle='--', alpha=0.7, label='Original')
+    ax3.axvline(x=result.utility_optimal_allocation * 100, color='green', linestyle=':', 
+                linewidth=2, label=f'Optimal: {result.utility_optimal_allocation*100:.1f}%')
+    ax3.scatter([result.utility_optimal_allocation * 100], [result.utility_optimal_value], 
+                color='green', s=100, zorder=5)
     ax3.set_xlabel('Allocation (%)')
-    ax3.set_ylabel('MCTR (% pts per 1% allocation)')
-    ax3.set_title('⚖️ Marginal Contribution to Risk (MCTR)', fontweight='bold')
+    ax3.set_ylabel('Utility (%)')
+    ax3.set_title(f'🎯 Mean-Variance Utility (λ={result.risk_aversion})', fontweight='bold')
     ax3.legend(loc='best')
     ax3.grid(True, alpha=0.3)
     
