@@ -1,0 +1,2 @@
+Ticker,Name,Sharpe Optimal (%),Min Vol Optimal (%),Recommended (%),Method,Original Sharpe,New Sharpe,Original Vol (%),New Vol (%)
+MCK,McKesson Corporation,25.0%,25.0%,21.9%,"Mean-Variance Utility (λ=2.0, γ=0.5)",0.788,1.201,15.82%,14.31%

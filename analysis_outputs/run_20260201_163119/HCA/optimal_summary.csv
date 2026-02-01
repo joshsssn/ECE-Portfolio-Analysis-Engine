@@ -1,0 +1,2 @@
+Ticker,Name,Sharpe Optimal (%),Min Vol Optimal (%),Recommended (%),Method,Original Sharpe,New Sharpe,Original Vol (%),New Vol (%)
+HCA,HCA Healthcare Inc.,25.0%,7.1%,9.7%,"Mean-Variance Utility (λ=2.0, γ=0.5)",0.788,0.858,15.82%,15.72%

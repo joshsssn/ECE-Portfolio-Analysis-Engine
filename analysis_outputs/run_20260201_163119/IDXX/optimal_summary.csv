@@ -1,0 +1,2 @@
+Ticker,Name,Sharpe Optimal (%),Min Vol Optimal (%),Recommended (%),Method,Original Sharpe,New Sharpe,Original Vol (%),New Vol (%)
+IDXX,IDEXX Laboratories Inc.,0.0%,0.0%,3.0%,"Mean-Variance Utility (λ=2.0, γ=0.5) [floor applied]",0.788,0.766,15.82%,16.00%

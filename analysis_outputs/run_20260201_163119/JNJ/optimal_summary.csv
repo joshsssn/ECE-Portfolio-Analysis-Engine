@@ -1,0 +1,2 @@
+Ticker,Name,Sharpe Optimal (%),Min Vol Optimal (%),Recommended (%),Method,Original Sharpe,New Sharpe,Original Vol (%),New Vol (%)
+JNJ,Johnson & Johnson,23.0%,25.0%,3.0%,"Mean-Variance Utility (λ=2.0, γ=0.5) [floor applied]",0.788,0.796,15.82%,15.48%

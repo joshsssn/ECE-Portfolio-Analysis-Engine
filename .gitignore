@@ -12,7 +12,5 @@ venv/
 ENV/
 
 # Project Specific
-analysis_outputs/
 *.log
 .DS_Store
-screener-results.csv
