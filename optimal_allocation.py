@@ -509,18 +509,10 @@ def optimize_allocation(ticker: str, name: str) -> OptimizationResult:
     print("\n4. Generating recommendation...")
     
     # Apply minimum floor for positions (institutional constraint)
-    if utility_alloc > 0 and utility_alloc < MIN_RECOMMENDED_ALLOCATION:
+    # Apply floor to ALL allocations, even if optimal is 0%
+    if utility_alloc < MIN_RECOMMENDED_ALLOCATION:
         recommended = MIN_RECOMMENDED_ALLOCATION
         method = f"Mean-Variance Utility (λ={RISK_AVERSION}, γ={CONCENTRATION_PENALTY}) [floor applied]"
-    elif utility_alloc == 0:
-        # Check if any positive utility exists - if so, apply floor
-        max_util_idx = np.argmax(scan_data['utility'])
-        if scan_data['utility'][max_util_idx] > scan_data['utility'][0]:  # Improvement exists
-            recommended = MIN_RECOMMENDED_ALLOCATION
-            method = f"Mean-Variance Utility (λ={RISK_AVERSION}, γ={CONCENTRATION_PENALTY}) [floor applied]"
-        else:
-            recommended = 0.0
-            method = f"Mean-Variance Utility (λ={RISK_AVERSION}, γ={CONCENTRATION_PENALTY}) [no benefit]"
     else:
         recommended = utility_alloc
         method = f"Mean-Variance Utility (λ={RISK_AVERSION}, γ={CONCENTRATION_PENALTY})"
