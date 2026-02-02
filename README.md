@@ -127,6 +127,25 @@ revenue > 100000000
 
 ---
 
+## 🐳 Docker Usage
+
+To run the application in a Docker container:
+
+1.  **Build the image**:
+    ```bash
+    docker build -t ece-analysis-app .
+    ```
+
+2.  **Run the container**:
+    ```bash
+    docker run -p 8501:8501 ece-analysis-app
+    ```
+
+3.  **Access the App**:
+    Open your browser and navigate to `http://localhost:8501`.
+
+---
+
 ## 📊 Multi-Allocation Analysis
 
 ### Purpose

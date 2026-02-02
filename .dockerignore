@@ -1,0 +1,12 @@
+__pycache__
+analysis_outputs/
+temp_uploads/
+.git
+.gitignore
+*.pdf
+*.zip
+ECE_tour_2_pitch_deck.pdf
+COR_DCF.xlsx
+screener-results.csv
+README.md
+
