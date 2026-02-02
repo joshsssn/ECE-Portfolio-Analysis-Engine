@@ -21,97 +21,19 @@ warnings.filterwarnings('ignore')
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-
-# Top 10 Holdings with their weights and sector classifications
-TOP_10_HOLDINGS = {
-    'AAPL': {'name': 'APPLE INC.', 'weight': 7.0, 'sector': 'Information Technology', 'country': 'United States'},
-    'MSFT': {'name': 'MICROSOFT CORP.', 'weight': 6.0, 'sector': 'Information Technology', 'country': 'United States'},
-    'NVDA': {'name': 'NVIDIA CORP.', 'weight': 5.0, 'sector': 'Information Technology', 'country': 'United States'},
-    'ASML': {'name': 'ASML HOLDING NV', 'weight': 4.0, 'sector': 'Information Technology', 'country': 'Netherlands'},
-    'SAP': {'name': 'SAP SE', 'weight': 2.5, 'sector': 'Information Technology', 'country': 'Germany'},
-    'REY.MI': {'name': 'REPLY SPA', 'weight': 2.0, 'sector': 'Information Technology', 'country': 'Italy'},
-    'IDR.MC': {'name': 'INDRA SISTEMAS SA', 'weight': 2.0, 'sector': 'Industrials', 'country': 'Spain'},
-    'JPM': {'name': 'JPMORGAN CHASE & CO.', 'weight': 3.0, 'sector': 'Financials', 'country': 'United States'},
-    'GS': {'name': 'GOLDMAN SACHS GROUP INC.', 'weight': 2.5, 'sector': 'Financials', 'country': 'United States'},
-    'HSBC': {'name': 'HSBC HOLDINGS PLC', 'weight': 2.0, 'sector': 'Financials', 'country': 'United Kingdom'},
-}
-
-# ETF Names mapping
-ETF_NAMES = {
-    'IXN': 'iShares Global Tech ETF',
-    'IXG': 'iShares Global Financials ETF',
-    'IXJ': 'iShares Global Healthcare ETF',
-    'EXI': 'iShares Global Industrials ETF',
-    'IXC': 'iShares Global Energy ETF',
-    'MXI': 'iShares Global Materials ETF',
-    'KXI': 'iShares Global Consumer Staples ETF',
-    'RXI': 'iShares Global Consumer Discretionary ETF',
-    'JXI': 'iShares Global Utilities ETF',
-    'IXP': 'iShares Global Comm Services ETF',
-    'REET': 'iShares Global REIT ETF',
-}
-
-# Target Sector Weights (from PDF)
-TARGET_SECTOR_WEIGHTS = {
-    'Information Technology': 26.5,
-    'Financials': 12.5,
-    'Industrials': 8.0,
-    'Health Care': 9.5,
-    'Consumer Discretionary': 5.0,
-    'Communication Services': 6.5,
-    'Real Estate': 8.7,
-    'Consumer Staples': 5.0,
-    'Utilities': 2.3,
-    'Energy': 3.9,
-    'Commodities': 12.1,
-}
-
-# iShares Global Sector ETFs as proxies
-SECTOR_ETF_PROXIES = {
-    'Information Technology': 'IXN',
-    'Financials': 'IXG',
-    'Health Care': 'IXJ',
-    'Industrials': 'EXI',
-    'Energy': 'IXC',
-    'Commodities': 'MXI',  # Materials proxy for commodities
-    'Consumer Staples': 'KXI',
-    'Consumer Discretionary': 'RXI',
-    'Utilities': 'JXI',
-    'Communication Services': 'IXP',
-    'Real Estate': 'REET',
-}
-
-# Benchmark
-BENCHMARK_TICKER = 'ACWI'
-
-# Data parameters
-LOOKBACK_YEARS = 5
-RESAMPLE_FREQ = 'W'  # Weekly resampling ('D' for daily)
-RISK_FREE_RATE = 0.04  # Annual risk-free rate (approximate)
-
+from config import AnalysisConfig
+from portfolio_loader import SECTOR_ETF_MAP
 
 # =============================================================================
 # DATA DOWNLOAD
 # =============================================================================
 
-def download_data(tickers: list, period_years: int = 5) -> pd.DataFrame:
+def download_data(tickers: list, config: AnalysisConfig) -> pd.DataFrame:
     """
     Download adjusted close prices for given tickers using yfinance.
-    
-    Parameters
-    ----------
-    tickers : list
-        List of ticker symbols
-    period_years : int
-        Number of years of historical data
-    
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with adjusted close prices
     """
     end_date = datetime.now()
-    start_date = end_date - timedelta(days=period_years * 365)
+    start_date = end_date - timedelta(days=config.lookback_years * 365)
     
     print(f"Downloading data for {len(tickers)} tickers...")
     print(f"Period: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
@@ -137,16 +59,6 @@ def download_data(tickers: list, period_years: int = 5) -> pd.DataFrame:
 def clean_data(prices: pd.DataFrame) -> pd.DataFrame:
     """
     Clean price data: forward fill and drop remaining NaN rows.
-    
-    Parameters
-    ----------
-    prices : pd.DataFrame
-        Raw price data
-    
-    Returns
-    -------
-    pd.DataFrame
-        Cleaned price data
     """
     # Forward fill missing values
     prices = prices.ffill()
@@ -164,19 +76,14 @@ def clean_data(prices: pd.DataFrame) -> pd.DataFrame:
 # PORTFOLIO RECONSTRUCTION LOGIC
 # =============================================================================
 
-def calculate_sector_allocations() -> dict:
+def calculate_sector_allocations(top_holdings: dict, target_sector_weights: dict) -> dict:
     """
     Calculate the weight used by Top 10 holdings per sector and remaining weight
     to be allocated to sector ETFs.
-    
-    Returns
-    -------
-    dict
-        Dictionary with sector allocation details
     """
     # Calculate weight used by Top 10 per sector
     sector_used_weights = {}
-    for ticker, info in TOP_10_HOLDINGS.items():
+    for ticker, info in top_holdings.items():
         sector = info['sector']
         weight = info['weight']
         sector_used_weights[sector] = sector_used_weights.get(sector, 0) + weight
@@ -186,7 +93,7 @@ def calculate_sector_allocations() -> dict:
     print("="*60)
     
     allocations = {}
-    for sector, target_weight in TARGET_SECTOR_WEIGHTS.items():
+    for sector, target_weight in target_sector_weights.items():
         used_weight = sector_used_weights.get(sector, 0)
         remaining_weight = max(0, target_weight - used_weight)  # Clip to 0 if negative
         
@@ -194,7 +101,7 @@ def calculate_sector_allocations() -> dict:
             'target_weight': target_weight,
             'used_by_top10': used_weight,
             'remaining_for_etf': remaining_weight,
-            'etf_proxy': SECTOR_ETF_PROXIES.get(sector, None)
+            'etf_proxy': SECTOR_ETF_MAP.get(sector, None)
         }
         
         print(f"\n{sector}:")
@@ -207,23 +114,18 @@ def calculate_sector_allocations() -> dict:
     return allocations
 
 
-def build_portfolio_weights() -> dict:
+def build_portfolio_weights(top_holdings: dict, target_sector_weights: dict) -> dict:
     """
     Build the complete portfolio weights combining Top 10 holdings and sector ETF proxies.
-    
-    Returns
-    -------
-    dict
-        Dictionary mapping tickers to their portfolio weights
     """
     weights = {}
     
     # Add Top 10 holdings
-    for ticker, info in TOP_10_HOLDINGS.items():
+    for ticker, info in top_holdings.items():
         weights[ticker] = info['weight']
     
     # Calculate sector allocations
-    sector_allocations = calculate_sector_allocations()
+    sector_allocations = calculate_sector_allocations(top_holdings, target_sector_weights)
     
     # Add sector ETF proxies for remaining weights
     for sector, alloc in sector_allocations.items():
@@ -248,27 +150,22 @@ def build_portfolio_weights() -> dict:
     return weights
 
 
-def display_portfolio_composition(weights: dict):
+def display_portfolio_composition(weights: dict, top_holdings: dict):
     """
     Display the final portfolio composition in a formatted table.
-    
-    Parameters
-    ----------
-    weights : dict
-        Portfolio weights
     """
     print(f"\n{'='*60}")
     print("FINAL PORTFOLIO COMPOSITION")
     print(f"{'='*60}")
     
     # Separate Top 10 from ETFs
-    top10_tickers = set(TOP_10_HOLDINGS.keys())
+    top10_tickers = set(top_holdings.keys())
     
     print("\n--- Top 10 Holdings ---")
     top10_total = 0
     for ticker in sorted(top10_tickers, key=lambda x: weights.get(x, 0), reverse=True):
         if ticker in weights:
-            sector = TOP_10_HOLDINGS[ticker]['sector']
+            sector = top_holdings[ticker]['sector']
             print(f"  {ticker:10s} {weights[ticker]:6.2f}%  ({sector})")
             top10_total += weights[ticker]
     print(f"  {'SUBTOTAL':10s} {top10_total:6.2f}%")
@@ -278,7 +175,7 @@ def display_portfolio_composition(weights: dict):
     etf_weights = {k: v for k, v in weights.items() if k not in top10_tickers}
     for ticker in sorted(etf_weights.keys(), key=lambda x: etf_weights[x], reverse=True):
         # Find which sector this ETF represents
-        sector = [s for s, e in SECTOR_ETF_PROXIES.items() if e == ticker]
+        sector = [s for s, e in SECTOR_ETF_MAP.items() if e == ticker]
         sector_str = sector[0] if sector else "Unknown"
         print(f"  {ticker:10s} {weights[ticker]:6.2f}%  ({sector_str})")
         etf_total += weights[ticker]
@@ -287,16 +184,9 @@ def display_portfolio_composition(weights: dict):
     print(f"\n  {'TOTAL':10s} {top10_total + etf_total:6.2f}%")
 
 
-def save_portfolio_composition(weights: dict, save_path: str = 'portfolio_composition.txt'):
+def save_portfolio_composition(weights: dict, top_holdings: dict, save_path: str = 'portfolio_composition.txt'):
     """
     Save the portfolio composition to a formatted text file.
-    
-    Parameters
-    ----------
-    weights : dict
-        Portfolio weights
-    save_path : str
-        Path to save the text file
     """
     lines = []
     
@@ -317,12 +207,12 @@ def save_portfolio_composition(weights: dict, save_path: str = 'portfolio_compos
     lines.append("--- TOP 10 HOLDINGS ---")
     lines.append("")
     
-    top10_tickers = set(TOP_10_HOLDINGS.keys())
+    top10_tickers = set(top_holdings.keys())
     top10_total = 0
     
     for ticker in sorted(top10_tickers, key=lambda x: weights.get(x, 0), reverse=True):
         if ticker in weights:
-            info = TOP_10_HOLDINGS[ticker]
+            info = top_holdings[ticker]
             name = info['name']
             sector = info['sector']
             region = info['country']
@@ -346,7 +236,7 @@ def save_portfolio_composition(weights: dict, save_path: str = 'portfolio_compos
     
     for ticker in sorted(etf_weights.keys(), key=lambda x: etf_weights[x], reverse=True):
         # Find sector for this ETF
-        sector_list = [s for s, e in SECTOR_ETF_PROXIES.items() if e == ticker]
+        sector_list = [s for s, e in SECTOR_ETF_MAP.items() if e == ticker]
         sector = sector_list[0] if sector_list else "Unknown"
         name = ETF_NAMES.get(ticker, ticker)
         region = "Global"  # ETFs are global
@@ -562,7 +452,10 @@ def display_risk_metrics(metrics: dict):
 # =============================================================================
 
 def plot_cumulative_returns(portfolio_returns: pd.Series, benchmark_returns: pd.Series,
-                            save_path: str = None):
+                            benchmark_name: str = 'ACWI',
+                            save_path: str = None,
+                            freq_label: str = 'Weekly',
+                            periods_per_year: int = 52):
     """
     Plot cumulative returns comparison: Portfolio vs Benchmark.
     
@@ -572,20 +465,26 @@ def plot_cumulative_returns(portfolio_returns: pd.Series, benchmark_returns: pd.
         Portfolio return series
     benchmark_returns : pd.Series
         Benchmark return series
+    benchmark_name : str
+        Name of the benchmark ticker (default: ACWI)
     save_path : str, optional
         Path to save the figure
+    freq_label : str
+        Label for frequency (e.g. 'Weekly', 'Daily')
+    periods_per_year : int
+        Annualization factor (52 for weekly, 252 for daily)
     """
     # Set style
     plt.style.use('seaborn-v0_8-darkgrid')
     sns.set_palette("husl")
     
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle('Portfolio Analysis: Reconstructed Portfolio vs ACWI Benchmark', 
+    fig.suptitle(f'Portfolio Analysis: Reconstructed Portfolio vs {benchmark_name} Benchmark', 
                  fontsize=14, fontweight='bold')
     
     # Align data
     aligned = pd.concat([portfolio_returns, benchmark_returns], axis=1).dropna()
-    aligned.columns = ['Reconstructed Portfolio', 'ACWI Benchmark']
+    aligned.columns = ['Reconstructed Portfolio', f'{benchmark_name} Benchmark']
     
     # 1. Cumulative Returns
     ax1 = axes[0, 0]
@@ -605,11 +504,15 @@ def plot_cumulative_returns(portfolio_returns: pd.Series, benchmark_returns: pd.
                      xytext=(10, 0), textcoords='offset points',
                      fontsize=10, fontweight='bold')
     
-    # 2. Rolling Volatility (12-week)
+    # 2. Rolling Volatility
+    # Window: ~3 months (12 weeks or 63 days)
+    window = 12 if periods_per_year == 52 else 63
+    unit = 'Week' if periods_per_year == 52 else 'Day'
+    
     ax2 = axes[0, 1]
-    rolling_vol = aligned.rolling(window=12).std() * np.sqrt(52) * 100
+    rolling_vol = aligned.rolling(window=window).std() * np.sqrt(periods_per_year) * 100
     rolling_vol.plot(ax=ax2, linewidth=2)
-    ax2.set_title('12-Week Rolling Volatility (Annualized)', fontweight='bold')
+    ax2.set_title(f'{window}-{unit} Rolling Volatility (Annualized)', fontweight='bold')
     ax2.set_xlabel('Date')
     ax2.set_ylabel('Volatility (%)')
     ax2.legend(loc='upper right')
@@ -634,8 +537,8 @@ def plot_cumulative_returns(portfolio_returns: pd.Series, benchmark_returns: pd.
     for col in aligned.columns:
         ax4.hist(aligned[col] * 100, bins=50, alpha=0.5, label=col, edgecolor='black')
     ax4.axvline(x=0, color='red', linestyle='--', linewidth=1, alpha=0.7)
-    ax4.set_title('Weekly Return Distribution', fontweight='bold')
-    ax4.set_xlabel('Weekly Return (%)')
+    ax4.set_title(f'{freq_label} Return Distribution', fontweight='bold')
+    ax4.set_xlabel(f'{freq_label} Return (%)')
     ax4.set_ylabel('Frequency')
     ax4.legend(loc='upper right')
     ax4.grid(True, alpha=0.3)
@@ -657,30 +560,34 @@ def main():
     """
     Main execution function for portfolio reconstruction and analysis.
     """
+    from portfolio_loader import DEFAULT_TOP_HOLDINGS, DEFAULT_SECTOR_TARGETS
+    
+    config = AnalysisConfig()
+    
     print("="*60)
     print("PORTFOLIO RECONSTRUCTION & RISK ANALYSIS")
     print("="*60)
     print("\nThis script reconstructs a portfolio from:")
-    print("  - Top 10 known holdings (36% of portfolio)")
-    print("  - Sector ETF proxies for remaining weights (64%)")
-    print("  - Benchmark: ACWI (iShares MSCI ACWI)")
+    print("  - Known holdings")
+    print("  - Sector ETF proxies for remaining weights")
+    print(f"  - Benchmark: {config.benchmark_ticker}")
     
     # Step 1: Build portfolio weights
     print("\n" + "-"*60)
     print("STEP 1: Building Portfolio Weights")
     print("-"*60)
-    weights = build_portfolio_weights()
-    display_portfolio_composition(weights)
+    weights = build_portfolio_weights(DEFAULT_TOP_HOLDINGS, DEFAULT_SECTOR_TARGETS)
+    display_portfolio_composition(weights, DEFAULT_TOP_HOLDINGS)
     
     # Step 2: Collect all tickers
-    all_tickers = list(weights.keys()) + [BENCHMARK_TICKER]
+    all_tickers = list(weights.keys()) + [config.benchmark_ticker]
     print(f"\n\nTotal tickers to download: {len(all_tickers)}")
     
     # Step 3: Download data
     print("\n" + "-"*60)
     print("STEP 2: Downloading Price Data")
     print("-"*60)
-    prices = download_data(all_tickers, LOOKBACK_YEARS)
+    prices = download_data(all_tickers, config)
     prices = clean_data(prices)
     
     # Step 4: Compute portfolio returns
@@ -688,31 +595,31 @@ def main():
     print("STEP 3: Computing Portfolio Returns")
     print("-"*60)
     portfolio_returns, constituent_returns = compute_portfolio_returns(
-        prices, weights, RESAMPLE_FREQ
+        prices, weights, config.resample_freq
     )
     
     # Compute benchmark returns
-    if RESAMPLE_FREQ == 'W':
-        benchmark_prices = prices[BENCHMARK_TICKER].resample('W-FRI').last()
+    if config.resample_freq == 'W':
+        benchmark_prices = prices[config.benchmark_ticker].resample('W-FRI').last()
     else:
-        benchmark_prices = prices[BENCHMARK_TICKER]
+        benchmark_prices = prices[config.benchmark_ticker]
     benchmark_returns = benchmark_prices.pct_change().dropna()
-    benchmark_returns.name = 'ACWI'
+    benchmark_returns.name = config.benchmark_ticker
     
     print(f"Portfolio returns computed: {len(portfolio_returns)} periods")
-    print(f"Frequency: {'Weekly' if RESAMPLE_FREQ == 'W' else 'Daily'}")
+    print(f"Frequency: {'Weekly' if config.resample_freq == 'W' else 'Daily'}")
     
     # Step 5: Calculate risk metrics
     print("\n" + "-"*60)
     print("STEP 4: Calculating Risk Metrics")
     print("-"*60)
-    periods_per_year = 52 if RESAMPLE_FREQ == 'W' else 252
+    periods_per_year = 52 if config.resample_freq == 'W' else 252
     metrics = calculate_risk_metrics(
         portfolio_returns, benchmark_returns,
-        risk_free_rate=RISK_FREE_RATE,
+        risk_free_rate=config.risk_free_rate,
         periods_per_year=periods_per_year
     )
-    metrics_df = display_risk_metrics(metrics)
+    display_risk_metrics(metrics)
     
     # Step 6: Create summary DataFrame
     print("\n" + "-"*60)
@@ -731,15 +638,22 @@ def main():
     print(f"\nRisk metrics saved to: {summary_path}")
     
     # Save portfolio composition to text file
-    save_portfolio_composition(weights, 'portfolio_composition.txt')
+    save_portfolio_composition(weights, DEFAULT_TOP_HOLDINGS, 'portfolio_composition.txt')
     
     # Step 7: Visualization
     print("\n" + "-"*60)
     print("STEP 6: Generating Visualizations")
     print("-"*60)
+    freq_label = 'Weekly' if config.resample_freq == 'W' else 'Daily'
+    periods = 52 if config.resample_freq == 'W' else 252
+    
     plot_cumulative_returns(
-        portfolio_returns, benchmark_returns,
-        save_path='portfolio_analysis_chart.png'
+        portfolio_returns, 
+        benchmark_returns,
+        benchmark_name=config.benchmark_ticker,
+        save_path='portfolio_analysis_chart.png',
+        freq_label=freq_label,
+        periods_per_year=periods
     )
     
     # Final summary
@@ -750,8 +664,12 @@ def main():
     print(f"  • Annualized Return:    {metrics['Annualized Return']:.2f}%")
     print(f"  • Annualized Volatility: {metrics['Annualized Volatility']:.2f}%")
     print(f"  • Sharpe Ratio:          {metrics['Sharpe Ratio']:.3f}")
-    print(f"  • Beta vs ACWI:          {metrics['Beta vs Benchmark']:.3f}")
-    print(f"  • VaR (95%, weekly):     {metrics['VaR (95%, period)']:.2f}%")
+    if 'Beta vs Benchmark' in metrics:
+        print(f"  • Beta vs {config.benchmark_ticker}:         {metrics['Beta vs Benchmark']:.3f}")
+    
+    # Dynamic VaR label
+    var_label = f"VaR (95%, {freq_label.lower()}):"
+    print(f"  • {var_label:21s} {metrics['VaR (95%, period)']:.2f}%")
     print(f"  • Maximum Drawdown:      {metrics['Maximum Drawdown']:.2f}%")
     
     return summary, portfolio_returns, benchmark_returns

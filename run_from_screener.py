@@ -16,6 +16,9 @@ from pathlib import Path
 from datetime import datetime
 import sys
 
+from config import AnalysisConfig
+from portfolio_loader import load_holdings_csv, load_sector_targets_csv, DEFAULT_TOP_HOLDINGS, DEFAULT_SECTOR_TARGETS
+
 
 # =============================================================================
 # CONFIGURATION
@@ -109,18 +112,12 @@ def screener_to_candidates(df: pd.DataFrame, top_n: int = None) -> list:
 # MAIN EXECUTION
 # =============================================================================
 
-def run_multi_allocation_for_screener(candidates: list, output_dir: Path, granularity: float = 0.005):
+def run_multi_allocation_for_screener(candidates: list, output_dir: Path, 
+                                      config: AnalysisConfig, 
+                                      holdings: dict, sector_targets: dict,
+                                      granularity: float = 0.005):
     """
     Run multi-allocation analysis for all stocks in the screener.
-    
-    Parameters
-    ----------
-    candidates : list
-        List of candidate stocks
-    output_dir : Path
-        Output directory
-    granularity : float
-        Allocation step size (default 0.005 = 0.5%)
     """
     import numpy as np
     from optimal_allocation import optimize_allocation
@@ -142,7 +139,7 @@ def run_multi_allocation_for_screener(candidates: list, output_dir: Path, granul
         try:
             # Step 1: Find optimal allocation
             print(f"   [1/3] Finding optimal allocation...")
-            opt_result = optimize_allocation(ticker, name)
+            opt_result = optimize_allocation(ticker, name, config, holdings, sector_targets)
             optimal_alloc = opt_result.recommended_allocation
             print(f"         Optimal: {optimal_alloc*100:.1f}%")
             
@@ -159,7 +156,9 @@ def run_multi_allocation_for_screener(candidates: list, output_dir: Path, granul
             # Step 3: Run backtests
             all_results = []
             for alloc in allocations:
-                results = run_backtest(ticker, name, allocation=alloc, 
+                results = run_backtest(ticker, name, 
+                                       config=config, top_holdings=holdings, sector_targets=sector_targets,
+                                       allocation=alloc, 
                                        output_dir=str(stock_dir), show_plot=False)
                 
                 row = {'Allocation (%)': alloc * 100}
@@ -200,6 +199,9 @@ def run_multi_allocation_for_screener(candidates: list, output_dir: Path, granul
 
 
 def run_from_screener(csv_path: str, 
+                      config: AnalysisConfig,
+                      holdings: dict,
+                      sector_targets: dict,
                       top_n: int = None,
                       run_portfolio: bool = True,
                       run_optimal: bool = True,
@@ -208,23 +210,6 @@ def run_from_screener(csv_path: str,
                       multi_alloc_granularity: float = None):
     """
     Main function: load screener CSV and run full analysis.
-    
-    Parameters
-    ----------
-    csv_path : str
-        Path to screener CSV file
-    top_n : int
-        Limit to top N stocks
-    run_portfolio : bool
-        Run portfolio reconstruction
-    run_optimal : bool
-        Run optimal allocation finder
-    run_backtests : bool
-        Run backtests
-    run_valuations : bool
-        Run valuation engine
-    multi_alloc_granularity : float, optional
-        If set, run multi-allocation analysis with this granularity (e.g. 0.005 = 0.5%)
     """
     from run_analysis import AnalysisOrchestrator, OUTPUT_BASE
     
@@ -247,7 +232,10 @@ def run_from_screener(csv_path: str,
     # Create orchestrator with screener candidates
     orchestrator = AnalysisOrchestrator(
         candidates=candidates,
-        output_base=OUTPUT_BASE
+        output_base=OUTPUT_BASE,
+        config=config,
+        holdings=holdings,
+        sector_targets=sector_targets
     )
     
     # Run analysis
@@ -264,7 +252,11 @@ def run_from_screener(csv_path: str,
     
     # Run multi-allocation analysis if requested
     if multi_alloc_granularity is not None:
-        run_multi_allocation_for_screener(candidates, output_dir, multi_alloc_granularity)
+        run_multi_allocation_for_screener(
+            candidates, output_dir, 
+            config, holdings, sector_targets,
+            multi_alloc_granularity
+        )
     
     # Copy screener to output for reference
     screener_copy_path = output_dir / 'input_screener.csv'
@@ -283,79 +275,66 @@ def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(
         description='Run portfolio analysis from screener CSV',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python run_from_screener.py
-  python run_from_screener.py --csv my_screener.csv
-  python run_from_screener.py --top 5
-  python run_from_screener.py --csv results.csv --top 3 --skip-portfolio
-  python run_from_screener.py --multi-alloc --top 3   # Run multi-allocation analysis
-        """
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
-    parser.add_argument(
-        '--csv', '-c',
-        default=DEFAULT_SCREENER,
-        help=f'Path to screener CSV file (default: {DEFAULT_SCREENER})'
-    )
+    parser.add_argument('--csv', '-c', default=DEFAULT_SCREENER, help=f'Path to screener CSV file (default: {DEFAULT_SCREENER})')
+    parser.add_argument('--top', '-n', type=int, default=None, help=f'Analyze only top N stocks')
+    parser.add_argument('--all', '-a', action='store_true', help='Analyze ALL stocks')
     
-    parser.add_argument(
-        '--top', '-n',
-        type=int,
-        default=None,
-        help=f'Analyze only top N stocks (default: {MAX_STOCKS} unless --all is used)'
-    )
+    # Run flags
+    parser.add_argument('--skip-portfolio', action='store_true', help='Skip portfolio reconstruction')
+    parser.add_argument('--skip-optimal', action='store_true', help='Skip optimal allocation step')
+    parser.add_argument('--skip-backtest', action='store_true', help='Skip backtest step')
+    parser.add_argument('--skip-valuation', action='store_true', help='Skip valuation step')
+    parser.add_argument('--only-valuation', action='store_true', help='Only run valuation')
+    parser.add_argument('--multi-alloc', '-m', type=float, nargs='?', const=0.5, default=None, help='Run multi-allocation analysis with granularity')
     
-    parser.add_argument(
-        '--all', '-a',
-        action='store_true',
-        help='Analyze ALL stocks in the CSV (⚠️ can take hours for large files)'
-    )
+    # Configuration - Dynamic Parameters
+    parser.add_argument('--risk-aversion', type=float, help='Risk aversion (gamma)')
+    parser.add_argument('--concentration-penalty', type=float, help='Concentration penalty')
+    parser.add_argument('--min-recommended', type=float, help='Min recommended allocation')
+    parser.add_argument('--min-allocation', type=float, help='Min allocation range')
+    parser.add_argument('--max-allocation', type=float, help='Max allocation range')
+    parser.add_argument('--benchmark', type=str, help='Benchmark ticker')
+    parser.add_argument('--risk-free-rate', type=float, help='Risk free rate (e.g. 0.045 for 4.5%)')
+    parser.add_argument('--lookback-years', type=int, help='Lookback years')
+    parser.add_argument('--resample-freq', type=str, choices=['D', 'W', 'M'], help='Resample frequency')
+    parser.add_argument('--correlation-ticker', type=str, dest='tech_etf', help='Correlation Ticker (e.g. IXN)')
+    parser.add_argument('--n-simulations', type=int, help='Number of Monte Carlo simulations')
     
-    parser.add_argument(
-        '--skip-portfolio',
-        action='store_true',
-        help='Skip portfolio reconstruction step'
-    )
-    
-    parser.add_argument(
-        '--skip-optimal',
-        action='store_true',
-        help='Skip optimal allocation step'
-    )
-    
-    parser.add_argument(
-        '--skip-backtest',
-        action='store_true',
-        help='Skip backtest step'
-    )
-    
-    parser.add_argument(
-        '--skip-valuation',
-        action='store_true',
-        help='Skip valuation step'
-    )
-    
-    parser.add_argument(
-        '--only-valuation',
-        action='store_true',
-        help='Only run valuation (skip portfolio, optimal, backtest)'
-    )
-    
-    parser.add_argument(
-        '--multi-alloc', '-m',
-        type=float,
-        nargs='?',
-        const=0.5,
-        default=None,
-        metavar='STEP',
-        help='Run multi-allocation analysis with STEP%% granularity (default: 0.5%% if no value given)'
-    )
+    # File inputs
+    parser.add_argument('--holdings-csv', type=str, help='Path to holdings CSV')
+    parser.add_argument('--sectors-csv', type=str, help='Path to sector targets CSV')
     
     args = parser.parse_args()
     
-    # Handle shortcuts
+    # 1. Initialize Config (Default + Overrides)
+    config = AnalysisConfig()
+    if args.risk_aversion is not None: config.risk_aversion = args.risk_aversion
+    if args.concentration_penalty is not None: config.concentration_penalty = args.concentration_penalty
+    if args.min_recommended is not None: config.min_recommended_allocation = args.min_recommended
+    if args.min_allocation is not None: config.min_allocation = args.min_allocation
+    if args.max_allocation is not None: config.max_allocation = args.max_allocation
+    if args.benchmark: config.benchmark_ticker = args.benchmark
+    if args.risk_free_rate is not None: config.risk_free_rate = args.risk_free_rate
+    if args.lookback_years: config.lookback_years = args.lookback_years
+    if args.resample_freq: config.resample_freq = args.resample_freq
+    if args.tech_etf: config.tech_etf_ticker = args.tech_etf
+    if args.n_simulations: config.n_simulations = args.n_simulations
+    
+    # 2. Load Portfolio Data
+    if args.holdings_csv:
+        holdings = load_holdings_csv(args.holdings_csv)
+    else:
+        holdings = DEFAULT_TOP_HOLDINGS
+        
+    if args.sectors_csv:
+        sector_targets = load_sector_targets_csv(args.sectors_csv)
+    else:
+        sector_targets = DEFAULT_SECTOR_TARGETS
+    
+    # 3. Determine run flags
     if args.only_valuation:
         run_portfolio = False
         run_optimal = False
@@ -367,24 +346,27 @@ Examples:
         run_backtests = not args.skip_backtest
         run_valuations = not args.skip_valuation
     
-    # Determine how many stocks to analyze
+    # 4. Stocks limit
     if args.all:
-        top_n = None  # No limit
-        print(f"\n⚠️  WARNING: Processing ALL stocks. This may take a long time!")
+        top_n = None
+        print(f"\n⚠️  WARNING: Processing ALL stocks.")
     elif args.top is not None:
         top_n = args.top
     else:
-        top_n = MAX_STOCKS  # Default
+        top_n = MAX_STOCKS
     
-    # Determine multi-alloc granularity (convert from % to decimal)
+    # 5. Multi-alloc
     multi_alloc_granularity = None
     if args.multi_alloc is not None:
-        multi_alloc_granularity = args.multi_alloc / 100  # Convert 0.5 -> 0.005
+        multi_alloc_granularity = args.multi_alloc / 100
         print(f"\n📊 Multi-allocation analysis enabled: {args.multi_alloc}% granularity")
     
-    # Run
+    # 6. Run
     orchestrator, output_dir = run_from_screener(
         csv_path=args.csv,
+        config=config,
+        holdings=holdings,
+        sector_targets=sector_targets,
         top_n=top_n,
         run_portfolio=run_portfolio,
         run_optimal=run_optimal,

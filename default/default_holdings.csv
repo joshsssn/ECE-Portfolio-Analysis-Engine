@@ -1,0 +1,11 @@
+Ticker,Name,Weight,Sector,Country
+AAPL,APPLE INC.,7.0,Information Technology,United States
+MSFT,MICROSOFT CORP.,6.0,Information Technology,United States
+NVDA,NVIDIA CORP.,5.0,Information Technology,United States
+ASML,ASML HOLDING NV,4.0,Information Technology,Netherlands
+SAP,SAP SE,2.5,Information Technology,Germany
+REY.MI,REPLY SPA,2.0,Information Technology,Italy
+IDR.MC,INDRA SISTEMAS SA,2.0,Industrials,Spain
+JPM,JPMORGAN CHASE & CO.,3.0,Financials,United States
+GS,GOLDMAN SACHS GROUP INC.,2.5,Financials,United States
+HSBC,HSBC HOLDINGS PLC,2.0,Financials,United Kingdom

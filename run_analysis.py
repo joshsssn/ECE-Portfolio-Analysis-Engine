@@ -29,21 +29,13 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # =============================================================================
-# CONFIGURATION - MODIFY THESE
+# CONFIGURATION
 # =============================================================================
+from config import AnalysisConfig
+from portfolio_loader import DEFAULT_TOP_HOLDINGS, DEFAULT_SECTOR_TARGETS
 
-# Candidate stocks to analyze (backtest + valuation)
-CANDIDATE_STOCKS = [
-    {'ticker': 'UNH', 'name': 'UnitedHealth Group', 'allocation': 0.05},
-    {'ticker': 'TMO', 'name': 'Thermo Fisher', 'allocation': 0.03},
-    {'ticker': 'V', 'name': 'Visa Inc.', 'allocation': 0.04},
-]
-
-# Run settings
-RUN_PORTFOLIO_RECONSTRUCTION = True
-RUN_OPTIMAL_ALLOCATION = True
-RUN_BACKTESTS = True
-RUN_VALUATION = True
+# Output directory base
+OUTPUT_BASE = Path("analysis_outputs")
 
 # Output directory base
 OUTPUT_BASE = Path("analysis_outputs")
@@ -56,9 +48,14 @@ OUTPUT_BASE = Path("analysis_outputs")
 class AnalysisOrchestrator:
     """Master orchestrator for the full analysis pipeline."""
     
-    def __init__(self, candidates: list, output_base: Path = OUTPUT_BASE):
+    def __init__(self, candidates: list, output_base: Path = OUTPUT_BASE, config: AnalysisConfig = None,
+                 holdings: dict = None, sector_targets: dict = None):
         self.candidates = candidates
         self.output_base = output_base
+        self.config = config if config else AnalysisConfig()
+        self.holdings = holdings if holdings else DEFAULT_TOP_HOLDINGS
+        self.sector_targets = sector_targets if sector_targets else DEFAULT_SECTOR_TARGETS
+        
         self.run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.output_dir = self.output_base / f"run_{self.run_timestamp}"
         
@@ -102,21 +99,25 @@ class AnalysisOrchestrator:
             import portfolio_reconstruction as pr
             
             # Build weights
-            portfolio_weights = pr.build_portfolio_weights()
+            portfolio_weights = pr.build_portfolio_weights(self.holdings, self.sector_targets)
             
             # Download data
-            tickers = list(portfolio_weights.keys()) + ['ACWI']
-            prices = pr.download_data(tickers)
+            tickers = list(portfolio_weights.keys()) + [self.config.benchmark_ticker]
+            prices = pr.download_data(tickers, self.config)
             
             # Compute returns (returns tuple: portfolio_returns, all_returns)
-            portfolio_returns, all_returns = pr.compute_portfolio_returns(prices, portfolio_weights)
+            portfolio_returns, all_returns = pr.compute_portfolio_returns(prices, portfolio_weights, self.config.resample_freq)
             
             # Resample benchmark
-            benchmark_prices = prices['ACWI'].resample('W-FRI').last()
+            if self.config.resample_freq == 'W':
+                benchmark_prices = prices[self.config.benchmark_ticker].resample('W-FRI').last()
+            else:
+                benchmark_prices = prices[self.config.benchmark_ticker]
             benchmark_returns = benchmark_prices.pct_change().dropna()
             
             # Calculate metrics
-            metrics = pr.calculate_risk_metrics(portfolio_returns, benchmark_returns)
+            periods = 52 if self.config.resample_freq == 'W' else 252
+            metrics = pr.calculate_risk_metrics(portfolio_returns, benchmark_returns, self.config.risk_free_rate, periods)
             self.portfolio_metrics = metrics
             
             # Save metrics
@@ -136,7 +137,7 @@ class AnalysisOrchestrator:
             cum_port = (1 + portfolio_returns).cumprod()
             cum_bench = (1 + benchmark_returns).cumprod()
             axes[0, 0].plot(cum_port.index, cum_port.values, label='Portfolio')
-            axes[0, 0].plot(cum_bench.index, cum_bench.values, label='ACWI')
+            axes[0, 0].plot(cum_bench.index, cum_bench.values, label=self.config.benchmark_ticker)
             axes[0, 0].set_title('Cumulative Returns')
             axes[0, 0].legend()
             
@@ -146,9 +147,11 @@ class AnalysisOrchestrator:
             axes[0, 1].set_title('Portfolio Drawdown')
             
             # Rolling volatility
-            rolling_vol = portfolio_returns.rolling(52).std() * np.sqrt(52) * 100
+            rolling_window = periods # 1 year window
+            rolling_vol = portfolio_returns.rolling(rolling_window).std() * np.sqrt(periods) * 100
+            unit = "Week" if self.config.resample_freq == 'W' else "Day"
             axes[1, 0].plot(rolling_vol.index, rolling_vol.values)
-            axes[1, 0].set_title('Rolling 52-Week Volatility (%)')
+            axes[1, 0].set_title(f'Rolling {rolling_window}-{unit} Volatility (%)')
             
             # Metrics bar chart - use correct key names from calculate_risk_metrics
             metric_names = ['Sharpe Ratio', 'Alpha (%)', 'Information Ratio']
@@ -195,7 +198,7 @@ class AnalysisOrchestrator:
             print(f"\n--- Finding optimal allocation for {ticker} ({name}) ---")
             
             try:
-                result = optimize_allocation(ticker, name)
+                result = optimize_allocation(ticker, name, self.config, self.holdings, self.sector_targets)
                 
                 # Update candidate with optimal allocation
                 candidate['optimal_allocation'] = result.recommended_allocation
@@ -274,6 +277,9 @@ class AnalysisOrchestrator:
                 result = run_backtest(
                     ticker=ticker,
                     name=name,
+                    config=self.config,
+                    top_holdings=self.holdings,
+                    sector_targets=self.sector_targets,
                     allocation=allocation,
                     output_dir=str(stock_dir),
                     show_plot=False
@@ -298,7 +304,7 @@ class AnalysisOrchestrator:
             print(f"❌ Could not import valuation module: {e}")
             return
         
-        engine = ValuationEngine()
+        engine = ValuationEngine(config=self.config)
         
         for candidate in self.candidates:
             ticker = candidate['ticker']
@@ -501,16 +507,26 @@ class AnalysisOrchestrator:
 def main():
     """Main entry point."""
     
+    # Example Default Candidate Stocks
+    candidate_stocks = [
+        {'ticker': 'UNH', 'name': 'UnitedHealth Group', 'allocation': 0.05},
+        {'ticker': 'TMO', 'name': 'Thermo Fisher', 'allocation': 0.03},
+        {'ticker': 'V', 'name': 'Visa Inc.', 'allocation': 0.04},
+    ]
+
     orchestrator = AnalysisOrchestrator(
-        candidates=CANDIDATE_STOCKS,
-        output_base=OUTPUT_BASE
+        candidates=candidate_stocks,
+        output_base=OUTPUT_BASE,
+        config=AnalysisConfig(),
+        holdings=DEFAULT_TOP_HOLDINGS,
+        sector_targets=DEFAULT_SECTOR_TARGETS
     )
     
     output_dir = orchestrator.run(
-        run_portfolio=RUN_PORTFOLIO_RECONSTRUCTION,
-        run_optimal=RUN_OPTIMAL_ALLOCATION,
-        run_backtests=RUN_BACKTESTS,
-        run_valuations=RUN_VALUATION
+        run_portfolio=True,
+        run_optimal=True,
+        run_backtests=True,
+        run_valuations=True
     )
     
     print(f"\n\n{'='*70}")
@@ -518,22 +534,16 @@ def main():
     print(f"{'='*70}")
     print(f"\n📂 Results saved to: {output_dir}")
     print("\nFolder structure:")
-    print("  ├── 1_portfolio_reconstruction/")
+    print("  ├── 0_portfolio/")
     print("  │   ├── portfolio_risk_metrics.csv")
     print("  │   ├── portfolio_weights.csv")
     print("  │   └── portfolio_analysis_chart.png")
-    print("  ├── 2_optimal_allocation/")
-    print("  │   ├── optimal_{TICKER}.png")
-    print("  │   ├── optimal_{TICKER}_summary.csv")
-    print("  │   └── optimal_summary.csv")
-    print("  ├── 3_backtests/")
-    print("  │   ├── backtest_{TICKER}_metrics.csv")
-    print("  │   └── backtest_{TICKER}_analysis.png")
-    print("  ├── 4_valuations/")
-    print("  │   ├── valuation_{TICKER}_dcf.png")
-    print("  │   ├── valuation_{TICKER}_relative.png")
-    print("  │   └── valuation_summary.csv")
-    print("  └── 5_summary/")
+    print("  ├── [TICKER]/")
+    print("  │   ├── optimal.png")
+    print("  │   ├── backtest.png")
+    print("  │   ├── valuation_dcf.png")
+    print("  │   └── ...")
+    print("  └── summary/")
     print("      ├── master_summary.csv")
     print("      └── analysis_report.txt")
     

@@ -1,7 +1,7 @@
 # ECE Portfolio Analysis Engine - Complete Documentation
 
 > **Author:** Josh E. SOUSSAN
-> **V1:** 01/02/2026
+> **V2:** 02/02/2026
 > **Project:** ECE Business Intelligence
 
 ---
@@ -53,7 +53,9 @@ All orchestrated via a single script that outputs organized results to timestamp
 | [optimal_allocation.py](file:///c:/Users/Joshs/Desktop/BI/ECE/optimal_allocation.py)             | ~700  | Mean-Variance Utility optimization       |
 | [backtest_candidate.py](file:///c:/Users/Joshs/Desktop/BI/ECE/backtest_candidate.py)             | ~700  | Pro-forma portfolio impact (incl. VaR)   |
 | [valuation_engine.py](file:///c:/Users/Joshs/Desktop/BI/ECE/valuation_engine.py)                 | ~1100 | DCF + Monte Carlo + Relative Valuation   |
-| [streamlit_app.py](file:///c:/Users/Joshs/Desktop/BI/ECE/streamlit_app.py)                      | ~250  | Streamlit app / GUI                      |
+| [streamlit_app.py](file:///c:/Users/Joshs/Desktop/BI/ECE/streamlit_app.py)                       | ~330  | Streamlit app / GUI                      |
+| [portfolio_loader.py](file:///c:/Users/Joshs/Desktop/BI/ECE/portfolio_loader.py)                 | ~110  | Handles loading portfolio data           |
+| [config.py](file:///c:/Users/Joshs/Desktop/BI/ECE/config.py)                                     | ~40   | Default settings                         |
 
 ---
 
@@ -87,17 +89,25 @@ python run_from_screener.py --skip-optimal --skip-backtest
 
 ### CLI Options
 
-| Flag                 | Description                                             |
-| -------------------- | ------------------------------------------------------- |
-| `--csv`, `-c`    | Path to screener CSV (default:`screener-results.csv`) |
-| `--top`, `-n`    | Limit to top N stocks (default: 10)                     |
-| `--skip-portfolio` | Skip portfolio reconstruction                           |
-| `--skip-optimal`   | Skip optimal allocation finder                          |
-| `--skip-backtest`  | Skip backtesting                                        |
-| `--skip-valuation` | Skip valuation engine                                   |
-| `--only-valuation` | Only run valuation (quick mode)                         |
-| `--multi-alloc`, `-m` | Run multi-allocation analysis (optional: step % e.g. 0.5) |
-| `--all`            | Analyze all stocks in screener (default: 10)            |
+| Flag                        | Description                                               |
+| --------------------------- | --------------------------------------------------------- |
+| `--csv`, `-c`           | Path to screener CSV (default:`screener-results.csv`)   |
+| `--top`, `-n`           | Limit to top N stocks (default: 10)                       |
+| `--skip-portfolio`        | Skip portfolio reconstruction                             |
+| `--skip-optimal`          | Skip optimal allocation finder                            |
+| `--skip-backtest`         | Skip backtesting                                          |
+| `--skip-valuation`        | Skip valuation engine                                     |
+| `--only-valuation`        | Only run valuation (quick mode)                           |
+| `--multi-alloc`, `-m`   | Run multi-allocation analysis (optional: step % e.g. 0.5) |
+| `--all`                   | Analyze all stocks in screener (default: 10)              |
+| `--risk-aversion`         | Risk aversion coefficient (λ) (Default: 2.0)             |
+| `--concentration-penalty` | Concentration penalty (γ) (Default: 0.5)                 |
+| `--min-recommended`       | Min recommended allocation (e.g. 0.03 for 3%)             |
+| `--max-allocation`        | Max allocation cap (e.g. 0.25 for 25%)                    |
+| `--risk-free-rate`        | Risk free rate (e.g. 0.045 for 4.5%)                      |
+| `--correlation-ticker`    | Ticker for correlation check (Default: IXN)               |
+| `--holdings-csv`          | Path to custom portfolio holdings CSV                     |
+| `--sectors-csv`           | Path to custom sector targets CSV                         |
 
 ### ⚠️ Screener Filtering Recommendations
 
@@ -132,18 +142,100 @@ revenue > 100000000
 
 To run the application in a Docker container:
 
-1.  **Build the image**:
-    ```bash
-    docker build -t ece-analysis-app .
-    ```
+1. **Build the image**:
 
-2.  **Run the container**:
-    ```bash
-    docker run -p 8501:8501 ece-analysis-app
-    ```
+   ```bash
+   docker build -t ece-analysis-app .
+   ```
+2. **Run the container**:
 
-3.  **Access the App**:
-    Open your browser and navigate to `http://localhost:8501`.
+   ```bash
+   docker run -p 8501:8501 ece-analysis-app
+   ```
+3. **Access the App**:
+   Open your browser and navigate to `http://localhost:8501`.
+
+---
+
+## ⚙️ Configuration & Custom Data
+
+### Configuration Parameters Reference
+
+These parameters can be tweaked via the CLI or the Streamlit GUI to customize the analysis logic.
+
+| Parameter                            | Type      | Default   | Description                                                                                                                                                                                                               |
+| :----------------------------------- | :-------- | :-------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Risk Aversion (λ)**         | `float` | `2.0`   | Controls the penalty for volatility in the utility function. Higher = more conservative.`<br>`• `0.5`: Aggressive (close to Sharpe max)`<br>`• `2.0`: Moderate (balanced)`<br>`• `5.0+`: Very Conservative |
+| **Concentration Penalty (γ)** | `float` | `0.5`   | Penalizes large allocations to a single stock.`<br>`Calculated as $- \gamma \times w^2$. Higher = forces more diversification.                                                                                        |
+| **Min Recommended (%)**        | `float` | `3.0%`  | Floor for positive recommendations. If the optimized allocation is below this (e.g., 0.5%), it is rounded down to 0% or up to this floor to avoid negligible positions.                                                   |
+| **Max Allocation (%)**         | `float` | `25.0%` | Hard cap on the allocation for any single candidate stock.                                                                                                                                                                |
+| **Risk-Free Rate**             | `float` | `4.0%`  | Used for Sharpe Ratio and DCF WACC calculations. Should reflect current 10Y Treasury yield.                                                                                                                               |
+| **Lookback Years**             | `int`   | `5`     | Historical data period for calculating volatility and correlation.                                                                                                                                                        |
+
+### Custom Data Formats
+
+You can override the default portfolio assumptions by providing your own CSV files.
+
+#### 1. Holdings CSV (`--holdings-csv`)
+
+Defines your current portfolio or the "base" portfolio for reconstruction.
+
+**Required Columns:** `Ticker`, `Weight`, `Sector`
+**Optional Columns:** `Name`, `Country`
+
+**Example:**
+
+```csv
+Ticker,Weight,Sector,Name,Country
+AAPL,7.0,Information Technology,Apple Inc,USA
+MSFT,6.0,Information Technology,Microsoft Corp,USA
+JPM,3.0,Financials,JPMorgan,USA
+```
+
+#### 2. Sector Targets CSV (`--sectors-csv`)
+
+Defines the target sector allocation distribution that the reconstruction engine will aim for (filling gaps with ETFs).
+
+**Required Columns:** `Sector`, `Weight`
+
+**Example:**
+
+```csv
+Sector,Weight
+Information Technology,26.5
+Financials,12.5
+Health Care,9.5
+Industrials,8.0
+Energy,3.9
+```
+
+---
+
+## 🖥️ Streamlit GUI
+
+The application includes a fully interactive web interface (`streamlit_app.py`) for easy configuration and execution.
+
+### Advanced Configuration Panel
+
+Customize the analysis without touching the code:
+
+- **Portfolio Parameters**: Adjust Risk Aversion (λ), Concentration Penalty (γ), and Min Recommended Allocation.
+- **Allocation Constraints**: Set Maximum Allocation caps (e.g. 25%).
+- **Market Parameters**: Configure Risk-Free Rate, Benchmark (ACWI), and Correlation Ticker (IXN).
+- **Simulation Settings**: Control lookback period and number of Monte Carlo simulations (1k-50k).
+
+### Custom Data Upload
+
+Override default portfolio assumptions by uploading your own CSVs:
+
+- **Holdings CSV**: Your current portfolio positions.
+- **Sector Targets CSV**: Your target sector weightings.
+
+Run the app locally:
+
+```bash
+python -m streamlit run streamlit_app.py
+```
 
 ---
 
@@ -178,16 +270,16 @@ python run_from_screener.py --multi-alloc 0.25 --top 5
 
 For each stock, generates `{TICKER}_multi_allocation.csv` with:
 
-| Column | Description |
-|--------|-------------|
-| `Allocation (%)` | 0.5, 1.0, 1.5, ... up to optimal |
-| `Is Optimal` | "Yes" or "No" |
+| Column                    | Description                         |
+| ------------------------- | ----------------------------------- |
+| `Allocation (%)`        | 0.5, 1.0, 1.5, ... up to optimal    |
+| `Is Optimal`            | "Yes" or "No"                       |
 | `Annualized Return (%)` | Portfolio return at this allocation |
-| `Sharpe Ratio` | Risk-adjusted return |
-| `VaR (95%, annualized)` | Value at Risk (annualized) |
-| `Max Drawdown (%)` | Maximum drawdown |
-| `Return Change (%)` | Change vs original portfolio |
-| `Sharpe Change` | Change in Sharpe ratio |
+| `Sharpe Ratio`          | Risk-adjusted return                |
+| `VaR (95%, annualized)` | Value at Risk (annualized)          |
+| `Max Drawdown (%)`      | Maximum drawdown                    |
+| `Return Change (%)`     | Change vs original portfolio        |
+| `Sharpe Change`         | Change in Sharpe ratio              |
 
 > **Note**: Multi-allocation analysis is computationally expensive. For a stock with 16% optimal allocation, it runs 33 backtests (0.5% to 16.5%).
 
@@ -201,7 +293,7 @@ Reconstruct a complete portfolio from **Top 10 holdings** + **sector ETF proxies
 
 ### Key Components
 
-#### 1. Top 10 Holdings (Hard-coded)
+#### 1. Top 10 Holdings (Default)
 
 ```python
 TOP_10_HOLDINGS = {
@@ -218,7 +310,7 @@ TOP_10_HOLDINGS = {
 }
 ```
 
-#### 2. Target Sector Weights
+#### 2. Target Sector Weights (Default)
 
 | Sector                 | Weight |
 | :--------------------- | :----- |
@@ -267,9 +359,12 @@ Any gap between target weight and Top 10 is filled with iShares Global ETFs:
 
 The allocation is chosen by maximizing the utility function:
 
-$$U = E[R] - \frac{\lambda}{2} \times \sigma^2 - \gamma \times w^2$$
+$$
+U = E[R] - \frac{\lambda}{2} \times \sigma^2 - \gamma \times w^2
+$$
 
 Where:
+
 - **E[R]** = Expected annualized return
 - **σ** = Annualized volatility
 - **w** = Allocation weight (0 to 1)
@@ -287,10 +382,10 @@ MIN_RECOMMENDED_ALLOCATION = 0.03 # Floor
 
 ### Reference Methods (for comparison)
 
-| Method | Description | When λ → |
-|--------|-------------|----------|
-| **Sharpe Optimization** | Maximize Sharpe Ratio | 0 (aggressive) |
-| **Min Volatility** | Minimize portfolio volatility | ∞ (conservative) |
+| Method                        | Description                   | When λ →        |
+| ----------------------------- | ----------------------------- | ----------------- |
+| **Sharpe Optimization** | Maximize Sharpe Ratio         | 0 (aggressive)    |
+| **Min Volatility**      | Minimize portfolio volatility | ∞ (conservative) |
 
 ### Visualization (4-panel)
 
@@ -483,9 +578,10 @@ yfinance>=0.2.28
 matplotlib>=3.7
 seaborn>=0.12
 scipy>=1.10
+streamlit
 ```
 
-Install: `pip install pandas numpy yfinance matplotlib seaborn scipy`
+Install: `pip install -r requirements.txt`
 
 ---
 

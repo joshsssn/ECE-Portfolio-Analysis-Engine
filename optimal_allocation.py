@@ -35,86 +35,12 @@ warnings.filterwarnings('ignore')
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-
-# Candidate stock to optimize
-CANDIDATE_TICKER = 'UNH'
-CANDIDATE_NAME = 'UnitedHealth Group'
-
-# Allocation search range
-MIN_ALLOCATION = 0.00  # 0%
-MAX_ALLOCATION = 0.25  # 25%
-ALLOCATION_STEPS = 50  # Granularity
-
-# Minimum recommended allocation (floor for "BUY" signals)
-# If utility optimization suggests less than this, we recommend this floor
-# Set to 0 to allow 0% recommendations
-MIN_RECOMMENDED_ALLOCATION = 0.03  # 3% minimum position
-
-# Risk-free rate
-RISK_FREE_RATE = 0.04
-
-# Risk aversion parameter for Mean-Variance Utility
-# Higher = more conservative (closer to MinVol), Lower = more aggressive (closer to MaxSharpe)
-# Typical values: 1-2 (aggressive), 3-5 (moderate), 6-10 (conservative)
-RISK_AVERSION = 2.0
-
-# Concentration penalty for utility function
-# Adds term: -γ × w² to penalize high allocations
-# Higher γ = stronger pull toward moderate allocations
-CONCENTRATION_PENALTY = 0.5
-
-# Data parameters
-LOOKBACK_YEARS = 5
-RESAMPLE_FREQ = 'W'
-
-# Benchmark
-BENCHMARK_TICKER = 'ACWI'
-
+from config import AnalysisConfig
+from portfolio_reconstruction import build_portfolio_weights, compute_portfolio_returns
 
 # =============================================================================
-# PORTFOLIO CONFIGURATION (from reconstruction)
+# DATA CLASSES
 # =============================================================================
-
-TOP_10_HOLDINGS = {
-    'AAPL': {'weight': 7.0, 'sector': 'Information Technology'},
-    'MSFT': {'weight': 6.0, 'sector': 'Information Technology'},
-    'NVDA': {'weight': 5.0, 'sector': 'Information Technology'},
-    'ASML': {'weight': 4.0, 'sector': 'Information Technology'},
-    'SAP': {'weight': 2.5, 'sector': 'Information Technology'},
-    'REY.MI': {'weight': 2.0, 'sector': 'Information Technology'},
-    'IDR.MC': {'weight': 2.0, 'sector': 'Industrials'},
-    'JPM': {'weight': 3.0, 'sector': 'Financials'},
-    'GS': {'weight': 2.5, 'sector': 'Financials'},
-    'HSBC': {'weight': 2.0, 'sector': 'Financials'},
-}
-
-TARGET_SECTOR_WEIGHTS = {
-    'Information Technology': 26.5,
-    'Financials': 12.5,
-    'Industrials': 8.0,
-    'Health Care': 9.5,
-    'Consumer Discretionary': 5.0,
-    'Communication Services': 6.5,
-    'Real Estate': 8.7,
-    'Consumer Staples': 5.0,
-    'Utilities': 2.3,
-    'Energy': 3.9,
-    'Commodities': 12.1,
-}
-
-SECTOR_ETF_PROXIES = {
-    'Information Technology': 'IXN',
-    'Financials': 'IXG',
-    'Health Care': 'IXJ',
-    'Industrials': 'EXI',
-    'Energy': 'IXC',
-    'Commodities': 'MXI',
-    'Consumer Staples': 'KXI',
-    'Consumer Discretionary': 'RXI',
-    'Utilities': 'JXI',
-    'Communication Services': 'IXP',
-    'Real Estate': 'REET',
-}
 
 
 # =============================================================================
@@ -173,10 +99,14 @@ class OptimizationResult:
 # DATA FUNCTIONS
 # =============================================================================
 
-def download_data(tickers: list, period_years: int = 5) -> pd.DataFrame:
+# =============================================================================
+# DATA FUNCTIONS
+# =============================================================================
+
+def download_data(tickers: list, config: AnalysisConfig) -> pd.DataFrame:
     """Download adjusted close prices."""
     end_date = datetime.now()
-    start_date = end_date - timedelta(days=period_years * 365)
+    start_date = end_date - timedelta(days=config.lookback_years * 365)
     
     print(f"Downloading data for {len(tickers)} tickers...")
     
@@ -197,55 +127,6 @@ def download_data(tickers: list, period_years: int = 5) -> pd.DataFrame:
     return prices.ffill().dropna()
 
 
-def build_portfolio_weights() -> dict:
-    """Build complete portfolio weights from Top 10 + ETF proxies."""
-    weights = {}
-    
-    for ticker, info in TOP_10_HOLDINGS.items():
-        weights[ticker] = info['weight']
-    
-    sector_used = {}
-    for ticker, info in TOP_10_HOLDINGS.items():
-        sector = info['sector']
-        sector_used[sector] = sector_used.get(sector, 0) + info['weight']
-    
-    for sector, target in TARGET_SECTOR_WEIGHTS.items():
-        used = sector_used.get(sector, 0)
-        remaining = max(0, target - used)
-        if remaining > 0:
-            etf = SECTOR_ETF_PROXIES.get(sector)
-            if etf:
-                weights[etf] = weights.get(etf, 0) + remaining
-    
-    total = sum(weights.values())
-    if abs(total - 100) > 0.01:
-        weights = {k: v / total * 100 for k, v in weights.items()}
-    
-    return weights
-
-
-def compute_portfolio_returns(prices: pd.DataFrame, weights: dict, 
-                              resample_freq: str = 'W') -> pd.Series:
-    """Compute weighted portfolio returns."""
-    if resample_freq == 'W':
-        prices_resampled = prices.resample('W-FRI').last()
-    else:
-        prices_resampled = prices
-    
-    returns = prices_resampled.pct_change().dropna()
-    
-    available = [t for t in weights.keys() if t in returns.columns]
-    available_weights = {t: weights[t] for t in available}
-    total = sum(available_weights.values())
-    normalized = {t: w / total * 100 for t, w in available_weights.items()}
-    
-    portfolio_returns = pd.Series(0.0, index=returns.index)
-    for ticker, weight in normalized.items():
-        portfolio_returns += returns[ticker] * (weight / 100)
-    
-    return portfolio_returns
-
-
 # =============================================================================
 # OPTIMIZATION FUNCTIONS
 # =============================================================================
@@ -264,36 +145,19 @@ def calculate_metrics(returns: pd.Series, risk_free: float = 0.04,
     return ann_return, ann_vol, sharpe
 
 
-def calculate_utility(returns: pd.Series, risk_aversion: float = 2.5,
-                      concentration_penalty: float = 0.8,
-                      allocation: float = 0.0,
-                      risk_free: float = 0.04, periods_per_year: int = 52) -> float:
+def calculate_utility(returns: pd.Series, allocation: float, config: AnalysisConfig) -> float:
     """
     Calculate Mean-Variance Utility with Concentration Penalty.
     
     U = E[R] - (λ/2) × σ² - γ × w²
-    
-    Where:
-        E[R] = Expected (annualized) return
-        λ = Risk aversion coefficient (penalizes volatility)
-        σ = Annualized volatility
-        γ = Concentration penalty (penalizes high allocations)
-        w = Allocation weight (0 to 1)
-    
-    The concentration penalty pulls allocations toward moderate values (~10%)
-    instead of hitting corners (0% or 25%).
-    
-    Institutional-grade parameters:
-        λ = 2.5 (moderate risk aversion)
-        γ = 0.8 (strong anti-concentration)
     """
-    ann_return, ann_vol, _ = calculate_metrics(returns, risk_free, periods_per_year)
+    ann_return, ann_vol, _ = calculate_metrics(returns, config.risk_free_rate, 52 if config.resample_freq == 'W' else 252)
     
     # Base utility: return minus risk penalty
-    base_utility = ann_return - (risk_aversion / 2) * (ann_vol ** 2)
+    base_utility = ann_return - (config.risk_aversion / 2) * (ann_vol ** 2)
     
     # Concentration penalty: quadratic penalty on allocation weight
-    concentration_cost = concentration_penalty * (allocation ** 2)
+    concentration_cost = config.concentration_penalty * (allocation ** 2)
     
     utility = base_utility - concentration_cost
     return utility
@@ -314,11 +178,6 @@ def calculate_mctr(original_returns: pd.Series,
                    periods_per_year: int = 52) -> float:
     """
     Calculate Marginal Contribution to Risk (MCTR).
-    
-    MCTR = d(Portfolio_Vol) / d(Candidate_Weight)
-    
-    If MCTR < 0, adding more of the candidate reduces total risk.
-    If MCTR > 0, adding more increases risk (concentration effect).
     """
     delta = 0.001  # 0.1% perturbation
     
@@ -338,13 +197,12 @@ def calculate_mctr(original_returns: pd.Series,
 
 def scan_allocations(original_returns: pd.Series,
                      candidate_returns: pd.Series,
-                     min_alloc: float = 0.0,
-                     max_alloc: float = 0.25,
+                     config: AnalysisConfig,
                      n_steps: int = 50) -> Dict:
     """
     Scan across allocation range and calculate metrics at each point.
     """
-    allocations = np.linspace(min_alloc, max_alloc, n_steps)
+    allocations = np.linspace(config.min_allocation, config.max_allocation, n_steps)
     
     sharpe_values = []
     vol_values = []
@@ -354,9 +212,9 @@ def scan_allocations(original_returns: pd.Series,
     
     for alloc in allocations:
         blended = construct_blended_portfolio(original_returns, candidate_returns, alloc)
-        ann_ret, ann_vol, sharpe = calculate_metrics(blended)
-        utility = calculate_utility(blended, RISK_AVERSION, CONCENTRATION_PENALTY, alloc)
-        mctr = calculate_mctr(original_returns, candidate_returns, alloc)
+        ann_ret, ann_vol, sharpe = calculate_metrics(blended, config.risk_free_rate, 52 if config.resample_freq == 'W' else 252)
+        utility = calculate_utility(blended, alloc, config)
+        mctr = calculate_mctr(original_returns, candidate_returns, alloc, 52 if config.resample_freq == 'W' else 252)
         
         sharpe_values.append(sharpe)
         vol_values.append(ann_vol * 100)  # Convert to percentage
@@ -427,7 +285,8 @@ def find_mctr_zero_crossing(scan_data: Dict) -> float:
 # MAIN OPTIMIZATION FUNCTION
 # =============================================================================
 
-def optimize_allocation(ticker: str, name: str) -> OptimizationResult:
+def optimize_allocation(ticker: str, name: str, config: AnalysisConfig, 
+                        top_holdings: Dict, sector_targets: Dict) -> OptimizationResult:
     """
     Find optimal allocation using both Sharpe Maximization and Risk Budgeting.
     
@@ -439,18 +298,18 @@ def optimize_allocation(ticker: str, name: str) -> OptimizationResult:
     
     # Build original portfolio
     print("\n1. Building original portfolio...")
-    weights = build_portfolio_weights()
+    weights = build_portfolio_weights(top_holdings, sector_targets)
     
     # Download data
-    all_tickers = list(weights.keys()) + [BENCHMARK_TICKER, ticker]
+    all_tickers = list(weights.keys()) + [config.benchmark_ticker, ticker]
     all_tickers = list(set(all_tickers))
-    prices = download_data(all_tickers, LOOKBACK_YEARS)
+    prices = download_data(all_tickers, config)
     
     # Compute original portfolio returns
-    original_returns = compute_portfolio_returns(prices, weights, RESAMPLE_FREQ)
+    original_returns, _ = compute_portfolio_returns(prices, weights, config.resample_freq)
     
     # Get candidate returns
-    if RESAMPLE_FREQ == 'W':
+    if config.resample_freq == 'W':
         prices_resampled = prices.resample('W-FRI').last()
     else:
         prices_resampled = prices
@@ -458,11 +317,12 @@ def optimize_allocation(ticker: str, name: str) -> OptimizationResult:
     candidate_returns = prices_resampled[ticker].pct_change().dropna()
     
     # Original metrics
-    orig_ret, orig_vol, orig_sharpe = calculate_metrics(original_returns)
+    periods = 52 if config.resample_freq == 'W' else 252
+    orig_ret, orig_vol, orig_sharpe = calculate_metrics(original_returns, config.risk_free_rate, periods)
     print(f"   Original Portfolio: Return={orig_ret*100:.2f}%, Vol={orig_vol*100:.2f}%, Sharpe={orig_sharpe:.3f}")
     
     # Candidate standalone metrics
-    cand_ret, cand_vol, cand_sharpe = calculate_metrics(candidate_returns)
+    cand_ret, cand_vol, cand_sharpe = calculate_metrics(candidate_returns, config.risk_free_rate, periods)
     print(f"   {ticker} Standalone:  Return={cand_ret*100:.2f}%, Vol={cand_vol*100:.2f}%, Sharpe={cand_sharpe:.3f}")
     
     # Correlation
@@ -471,13 +331,12 @@ def optimize_allocation(ticker: str, name: str) -> OptimizationResult:
     print(f"   Correlation with Portfolio: {correlation:.3f}")
     
     # Scan allocations
-    print(f"\n2. Scanning allocations from {MIN_ALLOCATION*100:.0f}% to {MAX_ALLOCATION*100:.0f}%...")
+    print(f"\n2. Scanning allocations from {config.min_allocation*100:.0f}% to {config.max_allocation*100:.0f}%...")
     scan_data = scan_allocations(
         original_returns, 
         candidate_returns,
-        MIN_ALLOCATION,
-        MAX_ALLOCATION,
-        ALLOCATION_STEPS
+        config,
+        n_steps=50
     )
     
     # Find optima
@@ -489,7 +348,7 @@ def optimize_allocation(ticker: str, name: str) -> OptimizationResult:
     print(f"      Best Allocation: {sharpe_alloc*100:.1f}%")
     print(f"      Sharpe Ratio: {sharpe_value:.3f} (vs {orig_sharpe:.3f} original)")
     if sharpe_at_boundary:
-        print(f"      ⚠️  WARNING: Optimal is at {MAX_ALLOCATION*100:.0f}% cap - true optimal may be higher")
+        print(f"      ⚠️  WARNING: Optimal is at {config.max_allocation*100:.0f}% cap - true optimal may be higher")
     
     # Method 2: Minimum Volatility (for reference)
     minvol_alloc, min_vol = find_min_volatility(scan_data)
@@ -499,8 +358,8 @@ def optimize_allocation(ticker: str, name: str) -> OptimizationResult:
     
     # Method 3: Mean-Variance Utility (PRIMARY METHOD)
     utility_alloc, utility_value = find_utility_optimal(scan_data)
-    orig_utility = calculate_utility(original_returns, RISK_AVERSION, CONCENTRATION_PENALTY, 0.0)
-    print(f"\n   🎯 MEAN-VARIANCE UTILITY (λ={RISK_AVERSION}, γ={CONCENTRATION_PENALTY}):")
+    orig_utility = calculate_utility(original_returns, 0.0, config)
+    print(f"\n   🎯 MEAN-VARIANCE UTILITY (λ={config.risk_aversion}, γ={config.concentration_penalty}):")
     print(f"      Best Allocation: {utility_alloc*100:.1f}%")
     print(f"      Utility: {utility_value:.2f}% (vs {orig_utility*100:.2f}% original)")
     print(f"      (γ penalizes high allocations → targets ~10%)")
@@ -510,19 +369,19 @@ def optimize_allocation(ticker: str, name: str) -> OptimizationResult:
     
     # Apply minimum floor for positions (institutional constraint)
     # Apply floor to ALL allocations, even if optimal is 0%
-    if utility_alloc < MIN_RECOMMENDED_ALLOCATION:
-        recommended = MIN_RECOMMENDED_ALLOCATION
-        method = f"Mean-Variance Utility (λ={RISK_AVERSION}, γ={CONCENTRATION_PENALTY}) [floor applied]"
+    if utility_alloc < config.min_recommended_allocation:
+        recommended = config.min_recommended_allocation
+        method = f"Mean-Variance Utility (λ={config.risk_aversion}, γ={config.concentration_penalty}) [floor applied]"
     else:
         recommended = utility_alloc
-        method = f"Mean-Variance Utility (λ={RISK_AVERSION}, γ={CONCENTRATION_PENALTY})"
+        method = f"Mean-Variance Utility (λ={config.risk_aversion}, γ={config.concentration_penalty})"
     
     # Calculate metrics at recommended allocation
     blended = construct_blended_portfolio(original_returns, candidate_returns, recommended)
-    new_ret, new_vol, new_sharpe = calculate_metrics(blended)
+    new_ret, new_vol, new_sharpe = calculate_metrics(blended, config.risk_free_rate, periods)
     
     # Calculate new utility at recommended allocation
-    new_utility = calculate_utility(blended, RISK_AVERSION, CONCENTRATION_PENALTY, recommended)
+    new_utility = calculate_utility(blended, recommended, config)
     
     # Create result
     result = OptimizationResult(
@@ -534,7 +393,7 @@ def optimize_allocation(ticker: str, name: str) -> OptimizationResult:
         min_volatility=min_vol,
         utility_optimal_allocation=utility_alloc,
         utility_optimal_value=utility_value,
-        risk_aversion=RISK_AVERSION,
+        risk_aversion=config.risk_aversion,
         recommended_allocation=recommended,
         recommendation_method=method,
         original_sharpe=orig_sharpe,
@@ -735,15 +594,22 @@ def optimize_multiple(candidates: List[Dict]) -> pd.DataFrame:
 
 def main():
     """Main entry point."""
+    from portfolio_loader import DEFAULT_TOP_HOLDINGS, DEFAULT_SECTOR_TARGETS
     
-    # Single stock optimization
-    result = optimize_allocation(CANDIDATE_TICKER, CANDIDATE_NAME)
+    config = AnalysisConfig()
+    
+    # Single stock optimization (default test case)
+    # Using 'UNH' as default if running standalone
+    ticker = 'UNH'
+    name = 'UnitedHealth Group'
+    
+    result = optimize_allocation(ticker, name, config, DEFAULT_TOP_HOLDINGS, DEFAULT_SECTOR_TARGETS)
     
     # Print recommendation
     print_recommendation(result)
     
     # Generate visualization
-    plot_optimization(result, save_path=f'optimal_allocation_{CANDIDATE_TICKER}.png')
+    plot_optimization(result, save_path=f'optimal_allocation_{ticker}.png')
     
     # Save results
     summary = pd.DataFrame([{
@@ -759,8 +625,8 @@ def main():
         'New Vol (%)': result.new_volatility,
     }])
     
-    summary.to_csv(f'optimal_allocation_{CANDIDATE_TICKER}_summary.csv', index=False)
-    print(f"\nSummary saved to: optimal_allocation_{CANDIDATE_TICKER}_summary.csv")
+    summary.to_csv(f'optimal_allocation_{ticker}_summary.csv', index=False)
+    print(f"\nSummary saved to: optimal_allocation_{ticker}_summary.csv")
     
     print("\n" + "="*70)
     print("OPTIMIZATION COMPLETE")

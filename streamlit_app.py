@@ -15,12 +15,16 @@ if str(current_dir) not in sys.path:
     sys.path.append(str(current_dir))
 
 # Import the analysis module
-# We import run_from_screener function directly
 try:
     from run_from_screener import run_from_screener, MAX_STOCKS
+    from config import AnalysisConfig
+    from portfolio_loader import load_holdings_csv, load_sector_targets_csv, DEFAULT_TOP_HOLDINGS, DEFAULT_SECTOR_TARGETS
 except ImportError:
-    st.error("Could not import 'run_from_screener.py'. Please make sure it is in the same directory.")
+    st.error("Could not import modules. Please make sure they are in the same directory.")
     st.stop()
+
+# Instantiate default config to get default values
+default_config = AnalysisConfig()
 
 # =============================================================================
 # UI CONFIGURATION
@@ -70,6 +74,34 @@ st.sidebar.markdown("---")
 # Multi-Allocation
 enable_multi_alloc = st.sidebar.checkbox("Enable Multi-Allocation Analysis", value=False)
 multi_alloc_step = st.sidebar.number_input("Step Granularity (%)", min_value=0.1, max_value=5.0, value=0.5, step=0.1, disabled=not enable_multi_alloc)
+
+st.sidebar.markdown("---")
+
+# Advanced Configuration
+with st.sidebar.expander("Advanced Configuration"):
+    st.markdown("### Portfolio Parameters")
+    risk_aversion = st.slider("Risk Aversion (λ)", 0.5, 10.0, float(default_config.risk_aversion), 0.1)
+    conc_penalty = st.slider("Concentration Penalty (γ)", 0.0, 50.0, float(default_config.concentration_penalty), 0.1)
+    
+    st.markdown("### Allocation Constraints")
+    min_rec_alloc = st.number_input("Min Allocation (%)", 0.0, 50.0, float(default_config.min_recommended_allocation * 100), 0.5) / 100.0
+    # min_alloc removed as per user request (defaults to 0 in config)
+    max_alloc = st.number_input("Max Allocation (%)", 0.0, 100.0, float(default_config.max_allocation * 100), 1.0) / 100.0
+    
+    st.markdown("### Market Parameters")
+    risk_free = st.number_input("Risk-Free Rate (%)", 0.0, 20.0, float(default_config.risk_free_rate * 100), 0.1) / 100.0
+    benchmark = st.text_input("Benchmark Ticker", default_config.benchmark_ticker)
+    tech_etf = st.text_input("Correlation Ticker", default_config.tech_etf_ticker)
+    
+    st.markdown("### Simulation Settings")
+    lookback = st.number_input("Lookback Years", 1, 20, default_config.lookback_years)
+    resample = st.selectbox("Resample Frequency", ["W", "D", "M"], index=["W", "D", "M"].index(default_config.resample_freq))
+    n_sims = st.number_input("Monte Carlo Sims", 1000, 50000, default_config.n_simulations)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("Portfolio Data")
+uploaded_holdings = st.sidebar.file_uploader("Upload Holdings CSV", type=['csv'])
+uploaded_sectors = st.sidebar.file_uploader("Upload Sector Targets CSV", type=['csv'])
 
 # =============================================================================
 # MAIN INTERFACE
@@ -210,9 +242,52 @@ if uploaded_file is not None:
             sys.stdout = logger
             
             with st.spinner('Running analysis pipeline...'):
+                # 1. Setup Configuration
+                config = AnalysisConfig(
+                    risk_aversion=risk_aversion,
+                    concentration_penalty=conc_penalty,
+                    min_recommended_allocation=min_rec_alloc,
+                    # min_allocation defaults to 0.0 in config.py
+                    max_allocation=max_alloc,
+                    benchmark_ticker=benchmark,
+                    risk_free_rate=risk_free,
+                    lookback_years=lookback,
+                    resample_freq=resample,
+                    tech_etf_ticker=tech_etf,
+                    n_simulations=n_sims
+                )
+                
+                # 2. Load Portfolio Data
+                holdings = DEFAULT_TOP_HOLDINGS
+                if uploaded_holdings:
+                    try:
+                        # Save temp
+                        h_path = temp_dir / "uploaded_holdings.csv"
+                        with open(h_path, "wb") as f:
+                            f.write(uploaded_holdings.getbuffer())
+                        holdings = load_holdings_csv(str(h_path))
+                        st.success(f"Loaded {len(holdings)} holdings from CSV")
+                    except Exception as e:
+                        st.error(f"Error loading holdings CSV: {e}")
+                
+                sector_targets = DEFAULT_SECTOR_TARGETS
+                if uploaded_sectors:
+                    try:
+                        # Save temp
+                        s_path = temp_dir / "uploaded_sectors.csv"
+                        with open(s_path, "wb") as f:
+                            f.write(uploaded_sectors.getbuffer())
+                        sector_targets = load_sector_targets_csv(str(s_path))
+                        st.success(f"Loaded {len(sector_targets)} sector targets from CSV")
+                    except Exception as e:
+                        st.error(f"Error loading sectors CSV: {e}")
+
                 # Execute analysis
                 orchestrator, output_dir = run_from_screener(
                     csv_path=str(temp_path),
+                    config=config,
+                    holdings=holdings,
+                    sector_targets=sector_targets,
                     top_n=top_n,
                     run_portfolio=run_portfolio,
                     run_optimal=run_optimal,

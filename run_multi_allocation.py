@@ -11,24 +11,31 @@ import pandas as pd
 import numpy as np
 import sys
 import os
+import argparse
 
 # Ensure we can import from current directory
-sys.path.insert(0, '.')
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
+from config import AnalysisConfig
+import portfolio_loader as pl
 from optimal_allocation import optimize_allocation
 from backtest_candidate import run_backtest
 
-def run_multi_allocation_analysis(ticker: str, name: str = None, granularity: float = 0.005):
+def run_multi_allocation_analysis(ticker: str, name: str = None, granularity: float = 0.005,
+                                  config: AnalysisConfig = None,
+                                  holdings: dict = None, sector_targets: dict = None):
     """
     Run multi-allocation analysis for a given ticker.
-    
-    1. Find optimal allocation using optimize_allocation()
-    2. Generate allocations (default 0.5% granularity) from minimal to optimal
-    3. Run backtest at each allocation level
-    4. Save master CSV with all metrics
     """
     if name is None:
         name = ticker
+    
+    if config is None:
+        config = AnalysisConfig()
+    if holdings is None:
+        holdings = pl.DEFAULT_TOP_HOLDINGS
+    if sector_targets is None:
+        sector_targets = pl.DEFAULT_SECTOR_TARGETS
     
     gran_pct = granularity * 100
     print("="*70)
@@ -38,7 +45,7 @@ def run_multi_allocation_analysis(ticker: str, name: str = None, granularity: fl
     # Step 1: Find optimal allocation
     print("\n[STEP 1] Finding optimal allocation...")
     try:
-        opt_result = optimize_allocation(ticker, name)
+        opt_result = optimize_allocation(ticker, name, config, holdings, sector_targets)
         optimal_alloc = opt_result.recommended_allocation
         print(f"\n   ✓ Optimal Allocation: {optimal_alloc*100:.1f}%")
     except Exception as e:
@@ -69,7 +76,10 @@ def run_multi_allocation_analysis(ticker: str, name: str = None, granularity: fl
         print(f"   [{i}/{len(allocations)}] {pct:.1f}%...", end=" ")
         
         try:
-            results = run_backtest(ticker, name, allocation=alloc, output_dir='.', show_plot=False)
+            results = run_backtest(ticker, name, 
+                                   config=config, top_holdings=holdings, sector_targets=sector_targets,
+                                   allocation=alloc, 
+                                   output_dir='.', show_plot=False)
             
             # Create row with allocation and all metrics
             row = {'Allocation (%)': pct}
@@ -156,23 +166,57 @@ def run_multi_allocation_analysis(ticker: str, name: str = None, granularity: fl
 
 
 if __name__ == "__main__":
-    # Parse command line arguments
-    if len(sys.argv) < 2:
-        print("Usage: python run_multi_allocation.py <TICKER> [STOCK_NAME] [GRANULARITY_PCT]")
-        print("Example: python run_multi_allocation.py COR \"Cencora Inc.\" 0.5")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description='Run multi-allocation analysis')
+    parser.add_argument('ticker', type=str, help='Ticker symbols')
+    parser.add_argument('name', type=str, nargs='?', help='Company name')
+    parser.add_argument('granularity', type=float, nargs='?', default=0.5, help='Granularity % (default: 0.5)')
     
-    ticker = sys.argv[1].upper()
-    name = sys.argv[2] if len(sys.argv) > 2 else ticker
+    # Config args
+    parser.add_argument('--risk-aversion', type=float, help='Risk aversion')
+    parser.add_argument('--concentration-penalty', type=float, help='Concentration penalty')
+    parser.add_argument('--min-recommended', type=float, help='Min recommended allocation')
+    parser.add_argument('--min-allocation', type=float, help='Min allocation')
+    parser.add_argument('--max-allocation', type=float, help='Max allocation')
+    parser.add_argument('--benchmark', type=str, help='Benchmark ticker')
+    parser.add_argument('--risk-free-rate', type=float, help='Risk free rate')
+    parser.add_argument('--lookback-years', type=int, help='Lookback years')
+    parser.add_argument('--resample-freq', type=str, choices=['D', 'W', 'M'], help='Resample frequency')
+    parser.add_argument('--tech-etf', type=str, help='Tech ETF ticker')
+    parser.add_argument('--n-simulations', type=int, help='N simulations')
     
-    # Check for granularity argument (3rd arg, or if 2nd arg looks like a number and not name)
-    granularity = 0.005
-    if len(sys.argv) > 3:
-        try:
-            val = float(sys.argv[3])
-            granularity = val / 100.0
-        except ValueError:
-            pass
+    # Files
+    parser.add_argument('--holdings-csv', type=str, help='Holdings CSV')
+    parser.add_argument('--sectors-csv', type=str, help='Sectors CSV')
     
-    # Run analysis
-    run_multi_allocation_analysis(ticker, name, granularity)
+    args = parser.parse_args()
+    
+    ticker = args.ticker.upper()
+    name = args.name if args.name else ticker
+    granularity = args.granularity / 100.0
+    
+    # Init config
+    config = AnalysisConfig()
+    if args.risk_aversion: config.risk_aversion = args.risk_aversion
+    if args.concentration_penalty: config.concentration_penalty = args.concentration_penalty
+    if args.min_recommended: config.min_recommended_allocation = args.min_recommended
+    if args.min_allocation: config.min_allocation = args.min_allocation
+    if args.max_allocation: config.max_allocation = args.max_allocation
+    if args.benchmark: config.benchmark_ticker = args.benchmark
+    if args.risk_free_rate: config.risk_free_rate = args.risk_free_rate
+    if args.lookback_years: config.lookback_years = args.lookback_years
+    if args.resample_freq: config.resample_freq = args.resample_freq
+    if args.tech_etf: config.tech_etf_ticker = args.tech_etf
+    if args.n_simulations: config.n_simulations = args.n_simulations
+    
+    # Load portfolio
+    if args.holdings_csv:
+        holdings = pl.load_holdings_csv(args.holdings_csv)
+    else:
+        holdings = pl.DEFAULT_TOP_HOLDINGS
+        
+    if args.sectors_csv:
+        sectors = pl.load_sector_targets_csv(args.sectors_csv)
+    else:
+        sectors = pl.DEFAULT_SECTOR_TARGETS
+    
+    run_multi_allocation_analysis(ticker, name, granularity, config, holdings, sectors)

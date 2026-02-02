@@ -20,12 +20,15 @@ from scipy import stats
 import warnings
 warnings.filterwarnings('ignore')
 
+from config import AnalysisConfig
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
 
-# Risk-free rate (10Y Treasury proxy)
-RISK_FREE_RATE = 0.045  # 4.5%
+# Equity Risk Premium
+EQUITY_RISK_PREMIUM = 0.05  # 5.0% - typically this is market implied, we can keep as constant or move to config later.
+# ... keeping other constants for now except risk_free_rate which comes from config
 
 # Equity Risk Premium
 EQUITY_RISK_PREMIUM = 0.05  # 5.0%
@@ -139,7 +142,7 @@ class DataFetcher:
     """Fetches and processes financial data from yfinance."""
     
     @staticmethod
-    def fetch(ticker: str) -> FinancialData:
+    def fetch(ticker: str, config: AnalysisConfig) -> FinancialData:
         """Fetch all required financial data for a ticker."""
         data = FinancialData(ticker=ticker)
         
@@ -318,7 +321,7 @@ class DataFetcher:
                 data.data_quality_warnings.append(f'Balance sheet error: {str(e)[:50]}')
             
             # Calculate WACC
-            data = DataFetcher._calculate_wacc(data)
+            data = DataFetcher._calculate_wacc(data, config)
             
             # Final validation
             if data.current_price <= 0 or data.shares_outstanding <= 0:
@@ -346,16 +349,16 @@ class DataFetcher:
         return (end_value / start_value) ** (1 / years) - 1
     
     @staticmethod
-    def _calculate_wacc(data: FinancialData) -> FinancialData:
+    def _calculate_wacc(data: FinancialData, config: AnalysisConfig) -> FinancialData:
         """Calculate Weighted Average Cost of Capital."""
         # Cost of Equity (CAPM)
-        data.cost_of_equity = RISK_FREE_RATE + data.beta * EQUITY_RISK_PREMIUM
+        data.cost_of_equity = config.risk_free_rate + data.beta * EQUITY_RISK_PREMIUM
         
         # Cost of Debt
         if data.total_debt > 0 and data.interest_expense > 0:
             data.cost_of_debt = min(data.interest_expense / data.total_debt, 0.15)  # Cap at 15%
         else:
-            data.cost_of_debt = RISK_FREE_RATE + 0.02  # Default spread
+            data.cost_of_debt = config.risk_free_rate + 0.02  # Default spread
         
         # After-tax cost of debt (assume 25% tax rate)
         after_tax_cost_of_debt = data.cost_of_debt * (1 - 0.25)
@@ -1034,7 +1037,8 @@ class RelativeValuation:
 class ValuationEngine:
     """Main valuation engine orchestrating all modules."""
     
-    def __init__(self):
+    def __init__(self, config: AnalysisConfig = None):
+        self.config = config if config else AnalysisConfig()
         self.results: Dict[str, ValuationResult] = {}
         self.financial_data: Dict[str, FinancialData] = {}
         self.relative_results: Dict[str, RelativeValuationResult] = {}
@@ -1051,7 +1055,7 @@ class ValuationEngine:
         # 1. Fetch Data
         if verbose:
             print("\n1. Fetching financial data...")
-        data = DataFetcher.fetch(ticker)
+        data = DataFetcher.fetch(ticker, self.config)
         self.financial_data[ticker] = data
         
         if not data.is_valid:
@@ -1264,6 +1268,8 @@ class ValuationEngine:
                        linewidth=2, label=f'Current Price: ${result.current_price:.2f}')
             ax1.axvline(result.mc_mean, color='green', linestyle='-', 
                        linewidth=2, label=f'MC Mean: ${result.mc_mean:.2f}')
+            ax1.axvline(result.mc_median, color='green', linestyle='--', 
+                       linewidth=2, label=f'MC Median: ${result.mc_median:.2f}')
             ax1.axvline(result.mc_p10, color='orange', linestyle=':', 
                        linewidth=1.5, label=f'P10: ${result.mc_p10:.2f}')
             ax1.axvline(result.mc_p90, color='orange', linestyle=':', 
@@ -1276,6 +1282,7 @@ class ValuationEngine:
             ax1.set_xlabel('Fair Value per Share ($)')
             ax1.set_ylabel('Density')
             ax1.set_title(f'Monte Carlo Fair Value Distribution\n'
+                         f'Base DCF: ${result.dcf_per_share:.2f}\n'
                          f'Win Probability: {result.win_probability:.1f}%')
             ax1.legend(loc='upper right', fontsize=8)
             ax1.grid(True, alpha=0.3)
@@ -1308,18 +1315,20 @@ def main():
     # Example tickers to analyze
     TICKERS = ['UNH', 'TMO', 'V', 'JNJ', 'PG']
     
+    config = AnalysisConfig()
+    
     print("="*60)
     print("VALUATION ENGINE - State of the Art DCF Analysis")
     print("="*60)
     print(f"\nConfiguration:")
-    print(f"  • Risk-Free Rate: {RISK_FREE_RATE*100:.1f}%")
+    print(f"  • Risk-Free Rate: {config.risk_free_rate*100:.1f}%")
     print(f"  • Equity Risk Premium: {EQUITY_RISK_PREMIUM*100:.1f}%")
     print(f"  • Projection Period: {PROJECTION_YEARS} years")
     print(f"  • Terminal Growth: {TERMINAL_GROWTH_BASE*100:.1f}%")
     print(f"  • Monte Carlo Simulations: {N_SIMULATIONS:,}")
     
     # Initialize engine
-    engine = ValuationEngine()
+    engine = ValuationEngine(config)
     
     # Analyze stocks
     for ticker in TICKERS:
