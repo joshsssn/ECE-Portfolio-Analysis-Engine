@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 import time
 import zipfile
+import html
+import streamlit.components.v1 as components
 
 # Add current directory to path to allow imports of local modules
 current_dir = Path(__file__).parent.resolve()
@@ -97,26 +99,118 @@ if uploaded_file is not None:
         # Prepare inputs
         multi_alloc_val = (multi_alloc_step / 100.0) if enable_multi_alloc else None
         
-        # Output container for logs
-        status_text = st.empty()
-        log_container = st.container()
+        st.markdown("**📜 Execution Log**")
+        log_placeholder = st.empty()
         
-        # Capture stdout to display in UI
-        class StreamlitLogger:
-            def write(self, message):
-                if message.strip():  # Avoid printing empty newlines excessively
-                    log_container.text(message.strip())
-            def flush(self):
-                pass
+        class RealTimeLogger:
+            def __init__(self, placeholder):
+                self.terminal = sys.stdout
+                self.placeholder = placeholder
+                self.log_buffer = ""
 
-        # We can't easily capture real-time stdout from a function run in the same thread without blocking UI updates.
-        # But we can try to notify user it's running.
-        with st.spinner('Running analysis pipeline... This may take a while.'):
-            try:
-                # Execute analysis
-                # Note: This runs synchronously so the UI will freeze until done. 
-                # For a better experience, we might want background threads, but keeping it simple for now.
+            def write(self, message):
+                self.terminal.write(message)
+                self.log_buffer += message
                 
+                # Use an iframe with smart scrolling via sessionStorage
+                html_content = f"""
+                <html>
+                <head>
+                    <style>
+                        body {{
+                            background-color: #1e1e1e;
+                            color: #e0e0e0;
+                            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+                            font-size: 16px;
+                            margin: 0;
+                            padding: 10px;
+                            white-space: pre-wrap;
+                            word-wrap: break-word;
+                        }}
+                        /* Custom scrollbar */
+                        ::-webkit-scrollbar {{
+                            width: 10px;
+                            height: 10px;
+                        }}
+                        ::-webkit-scrollbar-track {{
+                            background: #1e1e1e; 
+                        }}
+                        ::-webkit-scrollbar-thumb {{
+                            background: #555; 
+                            border-radius: 5px;
+                        }}
+                        ::-webkit-scrollbar-thumb:hover {{
+                            background: #888; 
+                        }}
+                    </style>
+                </head>
+                <body>
+                    <div id="log-content">{html.escape(self.log_buffer)}</div>
+                    <script>
+                        const scrollKey = 'streamlit_log_scroll_pos';
+                        const bottomKey = 'streamlit_log_at_bottom';
+                        let isAutoScrolling = false;
+                        
+                        function restoreScroll() {{
+                            const storedAtBottom = sessionStorage.getItem(bottomKey);
+                            const storedPos = sessionStorage.getItem(scrollKey);
+                            
+                            // Default to true (at bottom) if simple or null
+                            const isAtBottom = storedAtBottom === null || storedAtBottom === 'true';
+                            
+                            if (isAtBottom) {{
+                                isAutoScrolling = true;
+                                window.scrollTo(0, document.body.scrollHeight);
+                                setTimeout(() => {{ isAutoScrolling = false; }}, 50); // Release lock
+                            }} else if (storedPos) {{
+                                window.scrollTo(0, parseInt(storedPos));
+                            }}
+                        }}
+
+                        function saveScroll() {{
+                            if (isAutoScrolling) return; // Ignore script-triggered scrolls
+                            
+                            const scrollTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop;
+                            const scrollHeight = document.documentElement.scrollHeight || document.body.scrollHeight;
+                            const clientHeight = document.documentElement.clientHeight || window.innerHeight;
+                            
+                            // Check if at bottom (with 50px buffer to be generous)
+                            const atBottom = (scrollTop + clientHeight) >= (scrollHeight - 50);
+                            
+                            sessionStorage.setItem(scrollKey, scrollTop);
+                            sessionStorage.setItem(bottomKey, atBottom);
+                        }}
+
+                        // Restore scroll position
+                        restoreScroll();
+                        
+                        // Listen for scroll events to save state, but wait a moment for initial layout
+                        setTimeout(() => {{
+                            window.addEventListener('scroll', saveScroll);
+                            window.addEventListener('resize', saveScroll);
+                        }}, 100);
+                    </script>
+                </body>
+                </html>
+                """
+                # Render the iframe
+                with self.placeholder.container():
+                     components.html(html_content, height=600, scrolling=True)
+
+
+            def flush(self):
+                self.terminal.flush()
+
+        # Capture logic
+        original_stdout = sys.stdout
+        
+        try:
+            # Create logger
+            logger = RealTimeLogger(log_placeholder)
+            sys.stdout = logger
+            
+            with st.spinner('Running analysis pipeline...'):
+                # Execute analysis
                 orchestrator, output_dir = run_from_screener(
                     csv_path=str(temp_path),
                     top_n=top_n,
@@ -126,29 +220,29 @@ if uploaded_file is not None:
                     run_valuations=run_valuation,
                     multi_alloc_granularity=multi_alloc_val
                 )
+            
+            st.success("Analysis Complete!")
+            
+            # Create ZIP archive
+            st.write("Preparing download...")
+            archive_name = "analysis_results"
+            archive_path = shutil.make_archive(str(current_dir / archive_name), 'zip', output_dir)
+            
+            # Download Button
+            with open(archive_path, "rb") as f:
+                st.download_button(
+                    label="📥 Download Results (ZIP)",
+                    data=f,
+                    file_name=f"analysis_results_{int(time.time())}.zip",
+                    mime="application/zip"
+                )
                 
-                st.success("Analysis Complete!")
-                
-                # Create ZIP archive
-                st.write("Preparing download...")
-                archive_name = "analysis_results"
-                archive_path = shutil.make_archive(str(current_dir / archive_name), 'zip', output_dir)
-                
-                # Download Button
-                with open(archive_path, "rb") as f:
-                    st.download_button(
-                        label="📥 Download Results (ZIP)",
-                        data=f,
-                        file_name=f"analysis_results_{int(time.time())}.zip",
-                        mime="application/zip"
-                    )
-                
-                # Cleanup temp file if desired, or leave it
-                # os.remove(temp_path)
-                
-            except Exception as e:
-                st.error(f"An error occurred during execution: {e}")
-                st.exception(e)
+        except Exception as e:
+            st.error(f"An error occurred during execution: {e}")
+            st.exception(e)
+        finally:
+            # Restore stdout
+            sys.stdout = original_stdout
 
 else:
     st.info("Please upload a CSV file to proceed.")
