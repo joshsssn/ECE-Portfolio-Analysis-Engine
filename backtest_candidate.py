@@ -218,7 +218,9 @@ def print_impact_summary(metrics_before: dict, metrics_after: dict,
     vol_change = metrics_after['Annualized Volatility (%)'] - metrics_before['Annualized Volatility (%)']
     ret_change = metrics_after['Annualized Return (%)'] - metrics_before['Annualized Return (%)']
     sharpe_change = metrics_after['Sharpe Ratio'] - metrics_before['Sharpe Ratio']
-    beta_change = metrics_after['Beta vs ACWI'] - metrics_before['Beta vs ACWI']
+    # Use dynamic key for Beta and Correlation
+    beta_key = [k for k in metrics_after.keys() if k.startswith('Beta vs')][0]
+    beta_change = metrics_after[beta_key] - metrics_before[beta_key]
     dd_change = metrics_after['Max Drawdown (%)'] - metrics_before['Max Drawdown (%)']
     var_period_change = metrics_after['VaR (95%, period)'] - metrics_before['VaR (95%, period)']
     var_annual_change = metrics_after['VaR (95%, annualized)'] - metrics_before['VaR (95%, annualized)']
@@ -226,7 +228,7 @@ def print_impact_summary(metrics_before: dict, metrics_after: dict,
     print(f"  • Return:          {ret_change:+.2f}% ({'↑' if ret_change > 0 else '↓'})")
     print(f"  • Volatility:      {vol_change:+.2f}% ({'↓ Better' if vol_change < 0 else '↑ Higher Risk'})")
     print(f"  • Sharpe:          {sharpe_change:+.3f} ({'↑ Better' if sharpe_change > 0 else '↓ Worse'})")
-    print(f"  • Beta:            {beta_change:+.3f} ({'↓ More Defensive' if beta_change < 0 else '↑ More Aggressive'})")
+    print(f"  • {beta_key.replace('Beta', 'Beta Change')}: {beta_change:+.3f} ({'↓ More Defensive' if beta_change < 0 else '↑ More Aggressive'})")
     print(f"  • Max DD:          {dd_change:+.2f}% ({'↑ Worse' if dd_change > 0 else '↓ Better'})")
     print(f"  • VaR (95% ann.):  {var_annual_change:+.2f}% ({'↑ Better' if var_annual_change > 0 else '↓ Worse'})")
     
@@ -236,12 +238,14 @@ def print_impact_summary(metrics_before: dict, metrics_after: dict,
     print(f"  • Annualized Return:       {metrics_after['Annualized Return (%)']:.2f}%")
     print(f"  • Annualized Volatility:   {metrics_after['Annualized Volatility (%)']:.2f}%")
     print(f"  • Sharpe Ratio:            {metrics_after['Sharpe Ratio']:.3f}")
-    print(f"  • Beta vs ACWI:            {metrics_after['Beta vs ACWI']:.3f}")
+    print(f"  • {beta_key}:            {metrics_after[beta_key]:.3f}")
     print(f"  • Alpha:                   {metrics_after['Alpha (%)']:.2f}%")
     print(f"  • VaR (95%, weekly):       {metrics_after['VaR (95%, period)']:.2f}%")
     print(f"  • VaR (95%, annualized):   {metrics_after['VaR (95%, annualized)']:.2f}%")
     print(f"  • Max Drawdown:            {metrics_after['Max Drawdown (%)']:.2f}%")
-    print(f"  • Correlation vs ACWI:     {metrics_after['Correlation vs ACWI']:.4f}")
+    
+    corr_key = [k for k in metrics_after.keys() if k.startswith('Correlation vs')][0]
+    print(f"  • {corr_key}:     {metrics_after[corr_key]:.4f}")
     print(f"  • Tracking Error:          {metrics_after['Tracking Error (%)']:.2f}%")
     print(f"  • Information Ratio:       {metrics_after['Information Ratio']:.3f}")
     
@@ -311,20 +315,49 @@ def run_backtest(ticker: str, name: str, config: AnalysisConfig,
     
     # Metrics
     periods_per_year = 52 if config.resample_freq == 'W' else 252
-    metrics_before = calculate_metrics(old_portfolio, benchmark_returns, config.risk_free_rate, periods_per_year)
-    metrics_after = calculate_metrics(new_portfolio, benchmark_returns, config.risk_free_rate, periods_per_year)
-    metrics_candidate = calculate_metrics(candidate_returns, benchmark_returns, config.risk_free_rate, periods_per_year)
+    metrics_before = calculate_metrics(
+        old_portfolio, benchmark_returns, config.risk_free_rate, periods_per_year,
+        benchmark_name=config.benchmark_ticker
+    )
+    # Ensure self-correlation for Original Portfolio is 1
+    metrics_before['Correlation vs Original Portfolio'] = 1.0
+    metrics_after = calculate_metrics(
+        new_portfolio, benchmark_returns, config.risk_free_rate, periods_per_year,
+        benchmark_name=config.benchmark_ticker
+    )
+    metrics_candidate = calculate_metrics(
+        candidate_returns, benchmark_returns, config.risk_free_rate, periods_per_year,
+        benchmark_name=config.benchmark_ticker
+    )
     
     # Correlations
     correlations, corr_data = calculate_correlations(
         candidate_returns, old_portfolio, tech_returns, benchmark_returns, config.tech_etf_ticker
     )
     
+    # Calculate portfolio correlations
+    # Original Portfolio vs Tech ETF
+    aligned_orig_tech = pd.concat([old_portfolio, tech_returns], axis=1).dropna()
+    metrics_before[f'Correlation vs {config.tech_etf_ticker}'] = aligned_orig_tech.iloc[:, 0].corr(aligned_orig_tech.iloc[:, 1])
+    
+    # New Portfolio vs Original Portfolio
+    aligned_new_orig = pd.concat([new_portfolio, old_portfolio], axis=1).dropna()
+    metrics_after['Correlation vs Original Portfolio'] = aligned_new_orig.iloc[:, 0].corr(aligned_new_orig.iloc[:, 1])
+    
+    # New Portfolio vs Tech ETF
+    aligned_new_tech = pd.concat([new_portfolio, tech_returns], axis=1).dropna()
+    metrics_after[f'Correlation vs {config.tech_etf_ticker}'] = aligned_new_tech.iloc[:, 0].corr(aligned_new_tech.iloc[:, 1])
+    
+    # Add correlation metrics to candidate standalone (excluding vs Benchmark)
+    metrics_candidate_with_corr = metrics_candidate.copy()
+    metrics_candidate_with_corr['Correlation vs Original Portfolio'] = correlations['vs Original Portfolio']
+    metrics_candidate_with_corr[f'Correlation vs {config.tech_etf_ticker}'] = correlations[f'vs {config.tech_etf_ticker}']
+    
     # Save comparison
     comparison_df = pd.DataFrame({
         'Original Portfolio': metrics_before,
         'New Portfolio': metrics_after,
-        f'{name} (Standalone)': metrics_candidate,
+        f'{name} (Standalone)': metrics_candidate_with_corr,
     }).T
     
     csv_path = os.path.join(output_dir, 'backtest.csv')
@@ -375,15 +408,15 @@ def run_backtest(ticker: str, name: str, config: AnalysisConfig,
         plt.close(fig)
     
     # Return results
-    # Use generic 'Beta vs Benchmark' key from calculate_risk_metrics
-    beta_key = 'Beta vs Benchmark'
+    # Find dynamic Beta key
+    beta_key = [k for k in metrics_after.keys() if k.startswith('Beta vs')][0]
     
     return {
         'ticker': ticker,
         'name': name,
         'allocation': allocation,
-        'return_change': f"{metrics_after['Annualized Return'] - metrics_before['Annualized Return']:+.2f}%",
-        'vol_change': f"{metrics_after['Annualized Volatility'] - metrics_before['Annualized Volatility']:+.2f}%",
+        'return_change': f"{metrics_after['Annualized Return (%)'] - metrics_before['Annualized Return (%)']:+.2f}%",
+        'vol_change': f"{metrics_after['Annualized Volatility (%)'] - metrics_before['Annualized Volatility (%)']:+.2f}%",
         'sharpe_change': f"{metrics_after['Sharpe Ratio'] - metrics_before['Sharpe Ratio']:+.3f}",
         'beta_change': f"{metrics_after[beta_key] - metrics_before[beta_key]:+.3f}",
         'metrics_before': metrics_before,

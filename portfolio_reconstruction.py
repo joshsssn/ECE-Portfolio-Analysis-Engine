@@ -38,6 +38,7 @@ def download_data(tickers: list, config: AnalysisConfig) -> pd.DataFrame:
     print(f"Downloading data for {len(tickers)} tickers...")
     print(f"Period: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
     
+    # 1. First attempt with original tickers
     data = yf.download(
         tickers,
         start=start_date,
@@ -46,12 +47,55 @@ def download_data(tickers: list, config: AnalysisConfig) -> pd.DataFrame:
         progress=True
     )
     
-    # Extract 'Close' prices (auto_adjust=True means these are adjusted)
+    # Extract 'Close' prices
     if isinstance(data.columns, pd.MultiIndex):
         prices = data['Close']
     else:
         prices = data[['Close']]
         prices.columns = tickers
+    
+    # 2. Identify failed tickers
+    failed_tickers = [t for t in tickers if t not in prices.columns or prices[t].isna().all()]
+    
+    if failed_tickers:
+        print(f"   ⚠️ Initial download failed for: {failed_tickers}")
+        print(f"   🔄 Retrying with ^ prefix...")
+        
+        # 3. Try fallback with ^ prefix for failed tickers
+        retry_map = {f"^{t}": t for t in failed_tickers if not t.startswith('^')}
+        
+        if retry_map:
+            retry_list = list(retry_map.keys())
+            retry_data = yf.download(
+                retry_list,
+                start=start_date,
+                end=end_date,
+                auto_adjust=True,
+                progress=False
+            )
+            
+            if not retry_data.empty:
+                if isinstance(retry_data.columns, pd.MultiIndex):
+                    retry_prices = retry_data['Close']
+                else:
+                    retry_prices = retry_data[['Close']]
+                    retry_prices.columns = retry_list
+                
+                # Merge successful retries
+                for caret_ticker, original_ticker in retry_map.items():
+                    if caret_ticker in retry_prices.columns and not retry_prices[caret_ticker].isna().all():
+                        print(f"   ✅ Successfully recovered {original_ticker} as {caret_ticker}")
+                        prices[original_ticker] = retry_prices[caret_ticker]
+    
+    # Final Validation
+    nan_cols = [c for c in prices.columns if prices[c].isna().all()]
+    missing_cols = [t for t in tickers if t not in prices.columns]
+    bad_tickers = set(nan_cols + missing_cols)
+    
+    if bad_tickers:
+        error_msg = f"Error: Could not retrieve data for: {', '.join(bad_tickers)}. Please check symbol validity."
+        print(f"❌ {error_msg}")
+        raise ValueError(error_msg)
     
     return prices
 
@@ -323,7 +367,8 @@ def compute_portfolio_returns(prices: pd.DataFrame, weights: dict,
 
 def calculate_risk_metrics(portfolio_returns: pd.Series, benchmark_returns: pd.Series,
                            risk_free_rate: float = 0.04, 
-                           periods_per_year: int = 52) -> dict:
+                           periods_per_year: int = 52,
+                           benchmark_name: str = "Benchmark") -> dict:
     """
     Calculate comprehensive risk metrics for the portfolio.
     
@@ -337,6 +382,8 @@ def calculate_risk_metrics(portfolio_returns: pd.Series, benchmark_returns: pd.S
         Annual risk-free rate
     periods_per_year : int
         Number of periods per year (52 for weekly, 252 for daily)
+    benchmark_name : str
+        Name of the benchmark (e.g. ACWI)
     
     Returns
     -------
@@ -355,11 +402,11 @@ def calculate_risk_metrics(portfolio_returns: pd.Series, benchmark_returns: pd.S
     n_periods = len(port_ret)
     years = n_periods / periods_per_year
     annualized_return = (1 + total_return) ** (1 / years) - 1
-    metrics['Annualized Return'] = annualized_return * 100
+    metrics['Annualized Return (%)'] = annualized_return * 100
     
     # 2. Annualized Volatility
     volatility = port_ret.std() * np.sqrt(periods_per_year)
-    metrics['Annualized Volatility'] = volatility * 100
+    metrics['Annualized Volatility (%)'] = volatility * 100
     
     # 3. Sharpe Ratio
     excess_return = annualized_return - risk_free_rate
@@ -370,13 +417,13 @@ def calculate_risk_metrics(portfolio_returns: pd.Series, benchmark_returns: pd.S
     covariance = port_ret.cov(bench_ret)
     benchmark_variance = bench_ret.var()
     beta = covariance / benchmark_variance if benchmark_variance != 0 else 1
-    metrics['Beta vs Benchmark'] = beta
+    metrics[f'Beta vs {benchmark_name}'] = beta
     
     # 5. Alpha (annualized)
     bench_total_return = (1 + bench_ret).prod() - 1
     bench_annualized_return = (1 + bench_total_return) ** (1 / years) - 1
     alpha = annualized_return - (risk_free_rate + beta * (bench_annualized_return - risk_free_rate))
-    metrics['Alpha (annualized)'] = alpha * 100
+    metrics['Alpha (%)'] = alpha * 100
     
     # 6. Historical VaR (95%)
     var_95 = np.percentile(port_ret, 5)  # 5th percentile = 95% VaR
@@ -391,19 +438,19 @@ def calculate_risk_metrics(portfolio_returns: pd.Series, benchmark_returns: pd.S
     running_max = cumulative.cummax()
     drawdown = (cumulative - running_max) / running_max
     max_drawdown = drawdown.min()
-    metrics['Maximum Drawdown'] = max_drawdown * 100
+    metrics['Max Drawdown (%)'] = max_drawdown * 100
     
     # 8. Correlation with Benchmark
     correlation = port_ret.corr(bench_ret)
-    metrics['Correlation with Benchmark'] = correlation
+    metrics[f'Correlation vs {benchmark_name}'] = correlation
     
     # 9. Tracking Error
     tracking_diff = port_ret - bench_ret
     tracking_error = tracking_diff.std() * np.sqrt(periods_per_year)
-    metrics['Tracking Error'] = tracking_error * 100
+    metrics['Tracking Error (%)'] = tracking_error * 100
     
     # 10. Information Ratio
-    excess_annual = metrics['Annualized Return'] - (bench_annualized_return * 100)
+    excess_annual = metrics['Annualized Return (%)'] - (bench_annualized_return * 100)
     info_ratio = (excess_annual / 100) / tracking_error if tracking_error != 0 else 0
     metrics['Information Ratio'] = info_ratio
     
@@ -427,16 +474,16 @@ def display_risk_metrics(metrics: dict):
     df = pd.DataFrame.from_dict(metrics, orient='index', columns=['Value'])
     
     # Format values
-    format_pct = ['Annualized Return', 'Annualized Volatility', 'Alpha (annualized)',
-                  'VaR (95%, period)', 'VaR (95%, annualized)', 'Maximum Drawdown', 
-                  'Tracking Error']
+    format_pct = ['Annualized Return (%)', 'Annualized Volatility (%)', 'Alpha (%)',
+                  'VaR (95%, period)', 'VaR (95%, annualized)', 'Max Drawdown (%)', 
+                  'Tracking Error (%)']
     
     for idx in df.index:
         if idx in format_pct:
             df.loc[idx, 'Formatted'] = f"{df.loc[idx, 'Value']:.2f}%"
-        elif idx in ['Sharpe Ratio', 'Beta vs Benchmark', 'Information Ratio']:
+        elif idx in ['Sharpe Ratio', 'Information Ratio'] or idx.startswith('Beta vs'):
             df.loc[idx, 'Formatted'] = f"{df.loc[idx, 'Value']:.3f}"
-        elif idx == 'Correlation with Benchmark':
+        elif idx.startswith('Correlation vs'):
             df.loc[idx, 'Formatted'] = f"{df.loc[idx, 'Value']:.4f}"
         else:
             df.loc[idx, 'Formatted'] = f"{df.loc[idx, 'Value']:.4f}"
@@ -661,16 +708,18 @@ def main():
     print("ANALYSIS COMPLETE")
     print("="*60)
     print("\nKey Findings:")
-    print(f"  • Annualized Return:    {metrics['Annualized Return']:.2f}%")
-    print(f"  • Annualized Volatility: {metrics['Annualized Volatility']:.2f}%")
+    print(f"  • Annualized Return:    {metrics['Annualized Return (%)']:.2f}%")
+    print(f"  • Annualized Volatility: {metrics['Annualized Volatility (%)']:.2f}%")
     print(f"  • Sharpe Ratio:          {metrics['Sharpe Ratio']:.3f}")
-    if 'Beta vs Benchmark' in metrics:
-        print(f"  • Beta vs {config.benchmark_ticker}:         {metrics['Beta vs Benchmark']:.3f}")
+    
+    beta_key = f'Beta vs {config.benchmark_ticker}'
+    if beta_key in metrics:
+        print(f"  • {beta_key}:         {metrics[beta_key]:.3f}")
     
     # Dynamic VaR label
     var_label = f"VaR (95%, {freq_label.lower()}):"
     print(f"  • {var_label:21s} {metrics['VaR (95%, period)']:.2f}%")
-    print(f"  • Maximum Drawdown:      {metrics['Maximum Drawdown']:.2f}%")
+    print(f"  • Max Drawdown:          {metrics['Max Drawdown (%)']:.2f}%")
     
     return summary, portfolio_returns, benchmark_returns
 

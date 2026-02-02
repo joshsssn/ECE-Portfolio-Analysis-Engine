@@ -117,7 +117,13 @@ class AnalysisOrchestrator:
             
             # Calculate metrics
             periods = 52 if self.config.resample_freq == 'W' else 252
-            metrics = pr.calculate_risk_metrics(portfolio_returns, benchmark_returns, self.config.risk_free_rate, periods)
+            metrics = pr.calculate_risk_metrics(
+                portfolio_returns, 
+                benchmark_returns, 
+                self.config.risk_free_rate, 
+                periods,
+                benchmark_name=self.config.benchmark_ticker
+            )
             self.portfolio_metrics = metrics
             
             # Save metrics
@@ -157,7 +163,7 @@ class AnalysisOrchestrator:
             metric_names = ['Sharpe Ratio', 'Alpha (%)', 'Information Ratio']
             metric_vals = [
                 metrics.get('Sharpe Ratio', 0),
-                metrics.get('Alpha (annualized)', 0),  # Correct key name
+                metrics.get('Alpha (%)', 0),  
                 metrics.get('Information Ratio', 0)
             ]
             axes[1, 1].bar(metric_names, metric_vals, color=['steelblue', 'green', 'orange'])
@@ -169,9 +175,9 @@ class AnalysisOrchestrator:
             plt.close(fig)
             
             print(f"\n✅ Portfolio reconstruction complete")
-            print(f"   Annualized Return: {metrics.get('Annualized Return', 0)*100:.2f}%")
+            print(f"   Annualized Return: {metrics.get('Annualized Return (%)', 0):.2f}%")
             print(f"   Sharpe Ratio: {metrics.get('Sharpe Ratio', 0):.3f}")
-            print(f"   Alpha: {metrics.get('Alpha (annualized)', 0):.2f}%")
+            print(f"   Alpha: {metrics.get('Alpha (%)', 0):.2f}%")
             print(f"   Saved to: {self.portfolio_dir}")
             
         except Exception as e:

@@ -177,10 +177,13 @@ def run_multi_allocation_for_screener(candidates: list, output_dir: Path,
             
             # Save to ticker folder
             master_df = pd.DataFrame(all_results)
+            
+            # Dynamic column ordering based on actual benchmark ticker
+            benchmark = config.benchmark_ticker
             cols_order = [
                 'Allocation (%)', 'Is Optimal', 'Annualized Return (%)', 'Annualized Volatility (%)',
-                'Sharpe Ratio', 'Beta vs ACWI', 'Alpha (%)', 'VaR (95%, period)', 'VaR (95%, annualized)',
-                'Max Drawdown (%)', 'Correlation vs ACWI', 'Tracking Error (%)', 'Information Ratio',
+                'Sharpe Ratio', f'Beta vs {benchmark}', 'Alpha (%)', 'VaR (95%, period)', 'VaR (95%, annualized)',
+                'Max Drawdown (%)', f'Correlation vs {benchmark}', 'Tracking Error (%)', 'Information Ratio',
                 'Return Change (%)', 'Vol Change (%)', 'Sharpe Change', 'VaR Ann. Change (%)', 'Max DD Change (%)'
             ]
             cols_order = [c for c in cols_order if c in master_df.columns]

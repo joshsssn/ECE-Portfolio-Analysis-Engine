@@ -110,6 +110,7 @@ def download_data(tickers: list, config: AnalysisConfig) -> pd.DataFrame:
     
     print(f"Downloading data for {len(tickers)} tickers...")
     
+    # 1. First attempt with original tickers
     data = yf.download(
         tickers,
         start=start_date,
@@ -118,11 +119,55 @@ def download_data(tickers: list, config: AnalysisConfig) -> pd.DataFrame:
         progress=False
     )
     
+    # Extract 'Close' prices
     if isinstance(data.columns, pd.MultiIndex):
         prices = data['Close']
     else:
         prices = data[['Close']]
         prices.columns = tickers
+    
+    # 2. Identify failed tickers
+    failed_tickers = [t for t in tickers if t not in prices.columns or prices[t].isna().all()]
+    
+    if failed_tickers:
+        print(f"   ⚠️ Initial download failed for: {failed_tickers}")
+        
+        # 3. Try fallback with ^ prefix for failed tickers
+        retry_map = {f"^{t}": t for t in failed_tickers if not t.startswith('^')}
+        
+        if retry_map:
+            print(f"   🔄 Retrying with ^ prefix...")
+            retry_list = list(retry_map.keys())
+            retry_data = yf.download(
+                retry_list,
+                start=start_date,
+                end=end_date,
+                auto_adjust=True,
+                progress=False
+            )
+            
+            if not retry_data.empty:
+                if isinstance(retry_data.columns, pd.MultiIndex):
+                    retry_prices = retry_data['Close']
+                else:
+                    retry_prices = retry_data[['Close']]
+                    retry_prices.columns = retry_list
+                
+                # Merge successful retries
+                for caret_ticker, original_ticker in retry_map.items():
+                    if caret_ticker in retry_prices.columns and not retry_prices[caret_ticker].isna().all():
+                        print(f"   ✅ Successfully recovered {original_ticker} as {caret_ticker}")
+                        prices[original_ticker] = retry_prices[caret_ticker]
+    
+    # Final Validation
+    nan_cols = [c for c in prices.columns if prices[c].isna().all()]
+    missing_cols = [t for t in tickers if t not in prices.columns]
+    bad_tickers = set(nan_cols + missing_cols)
+    
+    if bad_tickers:
+        error_msg = f"Error: Could not retrieve data for: {', '.join(bad_tickers)}. Please check symbol validity."
+        print(f"❌ {error_msg}")
+        raise ValueError(error_msg)
     
     return prices.ffill().dropna()
 

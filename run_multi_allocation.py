@@ -112,18 +112,19 @@ def run_multi_allocation_analysis(ticker: str, name: str = None, granularity: fl
     master_df = pd.DataFrame(all_results)
     
     # Reorder columns for better readability
+    benchmark = config.benchmark_ticker
     cols_order = [
         'Allocation (%)',
         'Is Optimal',
         'Annualized Return (%)',
         'Annualized Volatility (%)',
         'Sharpe Ratio',
-        'Beta vs ACWI',
+        f'Beta vs {benchmark}',
         'Alpha (%)',
         'VaR (95%, period)',
         'VaR (95%, annualized)',
         'Max Drawdown (%)',
-        'Correlation vs ACWI',
+        f'Correlation vs {benchmark}',
         'Tracking Error (%)',
         'Information Ratio',
         'Return Change (%)',
