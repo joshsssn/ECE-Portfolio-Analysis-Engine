@@ -1095,9 +1095,10 @@ class ValuationEngine:
             print(f"   DCF Value: ${result.dcf_per_share:.2f} per share")
         
         # 3. Monte Carlo
+        n_sims = self.config.n_simulations
         if verbose:
-            print("\n3. Running Monte Carlo simulation (10,000 trials)...")
-        simulations = MonteCarloValuation.simulate(data)
+            print(f"\n3. Running Monte Carlo simulation ({n_sims:,} trials)...")
+        simulations = MonteCarloValuation.simulate(data, n_simulations=n_sims)
         result.simulation_values = simulations
         
         if len(simulations) > 0:
@@ -1282,7 +1283,8 @@ class ValuationEngine:
             ax1.set_xlabel('Fair Value per Share ($)')
             ax1.set_ylabel('Density')
             ax1.set_title(f'Monte Carlo Fair Value Distribution\n'
-                         f'Base DCF: ${result.dcf_per_share:.2f}\n'
+                         f'Base DCF: ${result.dcf_per_share:.2f} | '
+                         f'Trials: {len(result.simulation_values):,}\n'
                          f'Win Probability: {result.win_probability:.1f}%')
             ax1.legend(loc='upper right', fontsize=8)
             ax1.grid(True, alpha=0.3)

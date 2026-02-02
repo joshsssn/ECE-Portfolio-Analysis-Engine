@@ -96,7 +96,7 @@ with st.sidebar.expander("Advanced Configuration"):
     st.markdown("### Simulation Settings")
     lookback = st.number_input("Lookback Years", 1, 20, default_config.lookback_years)
     resample = st.selectbox("Resample Frequency", ["W", "D", "M"], index=["W", "D", "M"].index(default_config.resample_freq))
-    n_sims = st.number_input("Monte Carlo Sims", 1000, 50000, default_config.n_simulations)
+    n_sims = st.number_input("Monte Carlo Sims", min_value=1, max_value=1000000000, value=default_config.n_simulations, step=1000)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Portfolio Data")
