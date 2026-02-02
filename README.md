@@ -53,6 +53,7 @@ All orchestrated via a single script that outputs organized results to timestamp
 | [optimal_allocation.py](file:///c:/Users/Joshs/Desktop/BI/ECE/optimal_allocation.py)             | ~700  | Mean-Variance Utility optimization       |
 | [backtest_candidate.py](file:///c:/Users/Joshs/Desktop/BI/ECE/backtest_candidate.py)             | ~700  | Pro-forma portfolio impact (incl. VaR)   |
 | [valuation_engine.py](file:///c:/Users/Joshs/Desktop/BI/ECE/valuation_engine.py)                 | ~1100 | DCF + Monte Carlo + Relative Valuation   |
+| [streamlit_app.py](file:///c:/Users/Joshs/Desktop/BI/ECE/streamlit_app.py)                      | ~250  | Streamlit app / GUI                      |
 
 ---
 
