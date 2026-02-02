@@ -564,9 +564,12 @@ class MonteCarloValuation:
         # Generate random parameters
         np.random.seed(42)  # For reproducibility
         
+        # Use proportional std dev for margin (20% relative variation, min 0.5%)
+        margin_std = max(base_margin * 0.20, 0.005)
+        
         growth_samples = np.random.normal(base_growth, 0.02, n_simulations)
-        margin_samples = np.random.normal(base_margin, 0.02, n_simulations)  # Increased std for more variation
-        wacc_samples = np.random.normal(base_wacc, 0.005, n_simulations)
+        margin_samples = np.random.normal(base_margin, margin_std, n_simulations)
+        wacc_samples = np.random.normal(base_wacc, 0.01, n_simulations)  # Increased from 0.5% to 1%
         terminal_samples = np.random.normal(TERMINAL_GROWTH_BASE, 0.002, n_simulations)
         
         # Clip to reasonable ranges
