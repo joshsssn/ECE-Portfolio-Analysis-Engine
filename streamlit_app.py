@@ -106,12 +106,39 @@ uploaded_sectors = st.sidebar.file_uploader("Upload Sector Targets CSV", type=['
 # =============================================================================
 # MAIN INTERFACE
 # =============================================================================
-uploaded_file = st.file_uploader("Choose a Screener CSV file", type=['csv'])
+st.subheader("Screener Input")
+use_default_screener = st.checkbox(
+    "📋 Use Default Screener (for testing)", 
+    value=False,
+    help="Check this if you don't have a screener result file. Uses a default set of healthcare stocks."
+)
 
-if uploaded_file is not None:
+if use_default_screener:
+    st.info("ℹ️ Using default screener results. This includes a sample of healthcare stocks for testing.")
+    uploaded_file = None
+else:
+    uploaded_file = st.file_uploader("Choose a Screener CSV file", type=['csv'])
+
+if uploaded_file is not None or use_default_screener:
+    # Determine which file to use
+    if use_default_screener:
+        default_screener_path = current_dir / "default" / "default_screener_results.csv"
+        if not default_screener_path.exists():
+            st.error(f"Default screener file not found at: {default_screener_path}")
+            st.stop()
+        file_to_read = default_screener_path
+        file_source = "default"
+    else:
+        file_to_read = uploaded_file
+        file_source = "uploaded"
+    
     # Display preview
     try:
-        df = pd.read_csv(uploaded_file)
+        if file_source == "default":
+            df = pd.read_csv(file_to_read)
+        else:
+            df = pd.read_csv(file_to_read)
+        
         st.subheader("Screener Preview")
         st.dataframe(df.head())
         st.write(f"Total rows: {len(df)}")
@@ -120,13 +147,18 @@ if uploaded_file is not None:
 
     # Run Button
     if st.button("🚀 Run Analysis", type="primary"):
-        # Save uploaded file temporarily
+        # Save file temporarily
         temp_dir = current_dir / "temp_uploads"
         temp_dir.mkdir(exist_ok=True)
         temp_path = temp_dir / "uploaded_screener.csv"
         
-        with open(temp_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
+        if file_source == "default":
+            # Copy default file
+            shutil.copy(file_to_read, temp_path)
+        else:
+            # Save uploaded file
+            with open(temp_path, "wb") as f:
+                f.write(file_to_read.getbuffer())
         
         # Prepare inputs
         multi_alloc_val = (multi_alloc_step / 100.0) if enable_multi_alloc else None
@@ -321,3 +353,16 @@ if uploaded_file is not None:
 
 else:
     st.info("Please upload a CSV file to proceed.")
+
+# =============================================================================
+# HELP SECTION
+# =============================================================================
+st.markdown("---")
+with st.expander("📖 Help & Documentation"):
+    readme_path = current_dir / "UI.md"
+    if readme_path.exists():
+        with open(readme_path, "r", encoding="utf-8") as f:
+            readme_content = f.read()
+        st.markdown(readme_content)
+    else:
+        st.error("UI.md not found")
