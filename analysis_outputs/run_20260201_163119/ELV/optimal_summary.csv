@@ -1,2 +1,0 @@
-Ticker,Name,Sharpe Optimal (%),Min Vol Optimal (%),Recommended (%),Method,Original Sharpe,New Sharpe,Original Vol (%),New Vol (%)
-ELV,Elevance Health Inc.,0.0%,19.4%,3.0%,"Mean-Variance Utility (λ=2.0, γ=0.5) [floor applied]",0.788,0.786,15.82%,15.57%
