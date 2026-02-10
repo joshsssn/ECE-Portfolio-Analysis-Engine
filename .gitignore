@@ -1,5 +1,10 @@
 /__pycache__/
 /analysis_outputs/
-SOUSSAN_JOSH_Pitch_Deck.pdf
-SOUSSAN_JOSH_Valuation_Model.xlsx
-/Forecast/
+/Forecast/FinCast-fts/Inference/output/
+/Forecast/FinCast-fts/Inference/__pycache__/
+/Forecast/FinCast-fts/.venv/
+/Forecast/FinCast-fts/src/tools/__pycache__
+/Forecast/FinCast-fts/src/data_tools/__pycache__
+/Forecast/FinCast-fts/src/ffm/__pycache__
+/Forecast/FinCast-fts/src/st_moe_pytorch/__pycache__
+/Forecast/FinCast-fts/src/my_project.egg-info

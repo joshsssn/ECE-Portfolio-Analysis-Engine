@@ -138,6 +138,65 @@ with st.sidebar.expander("⚖️ Rebalancing (NEW)", expanded=False):
         current_portfolio_value = 100000
         min_trade_value = 100
         round_to_lots = False
+        
+# Sprint 0 Features - FinOracle 
+with st.sidebar.expander("🔮 FinOracle (BETA)", expanded=False):
+    enable_finoracle = st.checkbox("Enable FinOracle Forecasting", value=False,
+        help="Run AI-powered price forecasting using FinCast engine, not avaliable online yet")
+    
+    st.markdown("##### 📡 Data Fetching")
+    fo_freq = st.selectbox("Frequency", ["d", "w", "m", "1h", "5min", "1min", "tick"],
+        index=0, help="Data frequency for fetching & inference")
+    
+    col_d1, col_d2 = st.columns(2)
+    with col_d1:
+        fo_days = st.number_input("Days (N)", min_value=0, value=0, step=30,
+            help="Fetch last N days. Set 0 to use Years instead.")
+        fo_days = fo_days if fo_days > 0 else None
+    with col_d2:
+        fo_years = st.number_input("Years", min_value=1, max_value=20, value=5, step=1,
+            help="Fetch last N years (ignored if Days > 0)")
+    
+    col_s1, col_s2 = st.columns(2)
+    with col_s1:
+        fo_start = st.text_input("Start (YYYY-MM-DD)", value="",
+            help="Specific start date. Overrides Years.")
+        fo_start = fo_start if fo_start.strip() else None
+    with col_s2:
+        fo_end = st.text_input("End (YYYY-MM-DD)", value="",
+            help="Specific end date. Default: today.")
+        fo_end = fo_end if fo_end.strip() else None
+    
+    fo_skip_fetch = st.checkbox("Skip Fetch (reuse data.csv)", value=False,
+        help="Skip data download — reuse the existing data.csv from a previous run")
+    
+    st.markdown("##### 🧠 Model Configuration")
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        fo_context = st.number_input("Context L", min_value=32, max_value=1024, value=128, step=32,
+            help="Number of past data points the model sees (32-1024)")
+    with col_m2:
+        fo_horizon = st.number_input("Horizon H", min_value=1, max_value=256, value=16, step=1,
+            help="Number of future steps to predict (1-256)")
+    
+    fo_gpu = st.checkbox("Use GPU", value=True, help="Use GPU if available, else CPU")
+    
+    fo_optimize = st.checkbox("Hyperopt (AutoML)", value=False,
+        help="Optimize L & H automatically via Optuna. Slow but finds best config.")
+    if fo_optimize:
+        col_o1, col_o2 = st.columns(2)
+        with col_o1:
+            fo_trials = st.number_input("Trials", min_value=5, max_value=200, value=20, step=5,
+                help="Number of Optuna trials")
+        with col_o2:
+            fo_folds = st.number_input("Folds", min_value=2, max_value=10, value=3, step=1,
+                help="CV folds for optimization")
+    else:
+        fo_trials = 20
+        fo_folds = 3
+    
+    fo_skip_inference = st.checkbox("Skip Inference (re-visualize)", value=False,
+        help="Skip model run entirely. Use to re-display old results.")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Portfolio Data")
@@ -212,10 +271,14 @@ if uploaded_file is not None or use_default_screener:
                 self.terminal = sys.stdout
                 self.placeholder = placeholder
                 self.log_buffer = ""
+                # Initialize session state log if needed
+                if 'execution_log' not in st.session_state:
+                    st.session_state['execution_log'] = ""
 
             def write(self, message):
                 self.terminal.write(message)
                 self.log_buffer += message
+                st.session_state['execution_log'] = self.log_buffer # Sync to session state
                 
                 # Use an iframe with smart scrolling via sessionStorage
                 html_content = f"""
@@ -310,6 +373,9 @@ if uploaded_file is not None or use_default_screener:
         original_stdout = sys.stdout
         
         try:
+            # Clear previous log
+            st.session_state['execution_log'] = ""
+            
             # Create logger
             logger = RealTimeLogger(log_placeholder)
             sys.stdout = logger
@@ -333,6 +399,21 @@ if uploaded_file is not None or use_default_screener:
                     drawdown_reduction_factor=dd_reduction if enable_drawdown_protection else 1.0,
                     # Sprint 1: Ledoit-Wolf
                     use_ledoit_wolf=use_ledoit_wolf,
+                    # FinOracle Config (all flags)
+                    enable_finoracle=enable_finoracle,
+                    finoracle_freq=fo_freq,
+                    finoracle_days=fo_days,
+                    finoracle_years=fo_years,
+                    finoracle_start=fo_start,
+                    finoracle_end=fo_end,
+                    finoracle_skip_fetch=fo_skip_fetch,
+                    finoracle_context_len=fo_context,
+                    finoracle_horizon_len=fo_horizon,
+                    finoracle_optimize=fo_optimize,
+                    finoracle_trials=fo_trials,
+                    finoracle_folds=fo_folds,
+                    finoracle_use_gpu=fo_gpu,
+                    finoracle_skip_inference=fo_skip_inference
                 )
                 
                 # Store Sprint 1 options for pipeline use
@@ -383,25 +464,19 @@ if uploaded_file is not None or use_default_screener:
                     run_backtests=run_backtests,
                     run_valuations=run_valuation,
                     multi_alloc_granularity=multi_alloc_val,
-                    sprint1_options=sprint1_options
+                    sprint1_options=sprint1_options,
+                    run_forecasting=enable_finoracle
                 )
             
             st.success("Analysis Complete!")
             
-            # Create ZIP archive
-            st.write("Preparing download...")
-            archive_name = "analysis_results"
-            archive_path = shutil.make_archive(str(current_dir / archive_name), 'zip', output_dir)
-            
-            # Download Button
-            with open(archive_path, "rb") as f:
-                st.download_button(
-                    label="📥 Download Results (ZIP)",
-                    data=f,
-                    file_name=f"analysis_results_{int(time.time())}.zip",
-                    mime="application/zip"
-                )
-                
+            # Save state for persistence
+            st.session_state['latest_run'] = {
+                'output_dir': output_dir,
+                'enable_finoracle': enable_finoracle,
+                'timestamp': int(time.time())
+            }
+
         except Exception as e:
             st.error(f"An error occurred during execution: {e}")
             st.exception(e)
@@ -409,18 +484,116 @@ if uploaded_file is not None or use_default_screener:
             # Restore stdout
             sys.stdout = original_stdout
 
+# =============================================================================
+# PERSISTENT RESULTS DISPLAY
+# =============================================================================
+if 'latest_run' in st.session_state:
+    try:
+        run_data = st.session_state['latest_run']
+        output_dir = run_data['output_dir']
+        enable_finoracle = run_data['enable_finoracle']
+        ts = run_data['timestamp']
+
+        # Ensure output_dir is a Path object
+        if not isinstance(output_dir, Path):
+            output_dir = Path(output_dir)
+
+        if output_dir.exists():
+            # --- FinOracle Results Display ---
+            if enable_finoracle:
+                st.markdown("---")
+                st.subheader("🔮 FinOracle Forecasts")
+                
+                finoracle_files = []
+                for stock_folder in output_dir.iterdir():
+                   if stock_folder.is_dir():
+                       fo_dir = stock_folder / "finoracle"
+                       if fo_dir.exists():
+                           finoracle_files.append(fo_dir)
+                           stock_ticker = stock_folder.name
+                           plots = list(fo_dir.glob("*_forecast.png"))
+                           if plots:
+                               with st.expander(f"Forecast: {stock_ticker}", expanded=False):
+                                   st.image(str(plots[0]), caption=f"{stock_ticker} Forecast", use_container_width=True)
+
+                if not finoracle_files:
+                    st.info("No FinOracle results found in output directory.")
+            
+            # --- Main Download Button ---
+            st.markdown("---")
+            # Create ZIP archive (cached by timestamp to avoid re-zipping on every rerun)
+            zip_name = f"analysis_results_{ts}"
+            zip_path = current_dir / f"{zip_name}.zip"
+            
+            # Check if zip already exists for this run, else create it
+            if not zip_path.exists():
+                with st.spinner("Preparing download archive..."):
+                     shutil.make_archive(str(current_dir / zip_name), 'zip', output_dir)
+            
+            with open(zip_path, "rb") as f:
+                st.download_button(
+                    label="📥 Download Results (ZIP)",
+                    data=f,
+                    file_name=f"{zip_name}.zip",
+                    mime="application/zip",
+                    key="download_results_persistent"
+                )
+            
+            # --- Persistent Execution Log ---
+            if 'execution_log' in st.session_state and st.session_state['execution_log']:
+                with st.expander("📜 Previous Execution Log", expanded=False):
+                     st.text_area("Log Output", st.session_state['execution_log'], height=400, disabled=True)
+
+        else:
+            st.warning("Output directory from previous run no longer exists.")
+            del st.session_state['latest_run'] # clear stale state
+
+    except Exception as e:
+        st.error(f"Error displaying cached results: {e}")
+
+
 else:
     st.info("Please upload a CSV file to proceed.")
+
 
 # =============================================================================
 # HELP SECTION
 # =============================================================================
 st.markdown("---")
 with st.expander("📖 Help & Documentation"):
-    readme_path = current_dir / "UI.md"
-    if readme_path.exists():
-        with open(readme_path, "r", encoding="utf-8") as f:
-            readme_content = f.read()
-        st.markdown(readme_content)
+    md_dir = current_dir / "MD"
+    
+    if md_dir.exists():
+        # Get list of .md files
+        md_files = [f for f in os.listdir(md_dir) if f.endswith(".md")]
+        
+        if md_files:
+            # Sort files for consistent display
+            md_files.sort()
+            
+            # Simple radio or selectbox for navigation
+            selected_md = st.selectbox(
+                "Select a documentation page:",
+                md_files,
+                index=md_files.index("UI.md") if "UI.md" in md_files else 0
+            )
+            
+            # Read and display the selected file
+            md_path = md_dir / selected_md
+            try:
+                with open(md_path, "r", encoding="utf-8") as f:
+                    md_content = f.read()
+                st.markdown(md_content)
+            except Exception as e:
+                st.error(f"Error reading {selected_md}: {e}")
+        else:
+            st.warning("No markdown files found in MD folder.")
     else:
-        st.error("UI.md not found")
+        # Fallback to UI.md in root if MD doesn't exist (safety)
+        readme_path = current_dir / "UI.md"
+        if readme_path.exists():
+            with open(readme_path, "r", encoding="utf-8") as f:
+                readme_content = f.read()
+            st.markdown(readme_content)
+        else:
+            st.error("Documentation folder (MD/) not found.")

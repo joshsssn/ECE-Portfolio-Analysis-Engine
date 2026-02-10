@@ -13,37 +13,28 @@ Plan d'implémentation pour 25 techniques quantitatives, organisées par priorit
 > [!WARNING]
 > **HRP (#8) et Black-Litterman (#10)** nécessitent des changements architecturaux significatifs dans `optimal_allocation.py`. L'allocation actuelle utilise une approche Mean-Variance avec pénalité de concentration.
 
----
-
-## État Actuel du Codebase
-
-| Module                                                                                        | Fonctionnalités existantes                                |
-| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| [portfolio_reconstruction.py](file:///c:/Users/Joshs/Desktop/BI/ECE/portfolio_reconstruction.py) | VaR 95%, Sharpe, Beta, Alpha, Max Drawdown, Tracking Error |
-| [optimal_allocation.py](file:///c:/Users/Joshs/Desktop/BI/ECE/optimal_allocation.py)             | Utility optimization, MCTR, Sharpe curve                   |
-| [backtest_candidate.py](file:///c:/Users/Joshs/Desktop/BI/ECE/backtest_candidate.py)             | Pro-forma portfolio, correlations, impact analysis         |
-| [valuation_engine.py](file:///c:/Users/Joshs/Desktop/BI/ECE/valuation_engine.py)                 | DCF, Monte Carlo simulation                                |
+> [!NOTE]
+> Refaire la dockerisation du projet pour qu'il soit plus simple à lancer et à maintenir qaund j'aurai la version post-sprints.
 
 ---
 
 ## Proposed Changes :
 
-### TIER S++ — Sprint 0 : yfinance -> Refinitive-data, Screener RD (compatibilité) et .ENV mon API Key (BYOK en Prod ?)
-
-### TIER S+ — Sprint 0.5 : Inclure Forecast dans le pipeline et l'UI Streamlit
+### TIER S++ — Sprint 0 : Inclure Forecast dans le pipeline et l'UI Streamlit DONE
 
 1. **Unifier l'environnement** : Converting les tickers en RIC, s'assurer que l'environnement Python de ECE peut faire tourner FinCast sans soucis de dépendances, re router les dossiers, ajouter les flags FinCast au CLI et mettre un Singleton Pattern en place.
 2. **Créer un Wrapper** : Écrire un script
 
-   ```
+```
    fincast_wrapper.py
-   ```
+```
 
    dans ECE qui agît comme un pont vers le dossier. Il gérera les imports compliqués pour que le code principal reste propre.
 
-   ```
+```
    Forecast/
-   ```
+```
+
 3. **Modifier l'Orchestrateur** : Ajouter l'étape qui appelle ce wrapper.
 
    ```
@@ -51,7 +42,13 @@ Plan d'implémentation pour 25 techniques quantitatives, organisées par priorit
    ```
 4. **Mise à jour UI** : Ajouter le ON/OFF switch et les differentes options (flags) dans Streamlit. (+ run on top X ou run all)
 
----
+## TIER S+ — Sprint 0.5 :
+
+- Rajouter les données Refinitive-data pour produire plus de metrics (lookup refinitiv_roadmap.md),
+- Screener Refinitive Data (Intégration du Screener Refinitive Data dans le code, l'UI et le CLI + logique de formatting des résultats pour la compatibilité avec les autres modules)
+- Logique BYOK pour Refinitive-data API
+
+Maxi long donc c'est pas pour demain. Aussi ce serait stylé de rajouter un parsing du language naturel pour le transfomer en critères pour le screener. On aurait un screener en language naturel c'est maxi frais sah.
 
 ### TIER S — Sprint 1 (Effort: ~7h total) DONE
 
@@ -258,11 +255,11 @@ def calculate_rebalancing_trades(
         price = current_prices.get(ticker, 0)
         if price <= 0:
             continue
-      
+  
         shares = int(abs(delta) / price)
         if shares == 0:
             continue
-      
+  
         orders.append(TradeOrder(
             ticker=ticker,
             action='BUY' if delta > 0 else 'SELL',

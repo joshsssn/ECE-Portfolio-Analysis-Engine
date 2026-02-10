@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Distribution / building
+build/
+dist/
+*.egg-info/
+
+# Model Weights
+*.pth
+Inference/v1.pth

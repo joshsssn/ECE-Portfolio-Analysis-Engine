@@ -34,6 +34,9 @@ warnings.filterwarnings('ignore')
 from config import AnalysisConfig
 from portfolio_loader import DEFAULT_TOP_HOLDINGS, DEFAULT_SECTOR_TARGETS
 from portfolio_reconstruction import build_portfolio_weights
+from finoracle_wrapper import FinOracleWrapper
+from finoracle_utils import get_ric
+import argparse
 
 # Output directory base
 OUTPUT_BASE = Path("analysis_outputs")
@@ -83,6 +86,7 @@ class AnalysisOrchestrator:
         self.optimal_results = {}
         self.backtest_results = {}
         self.valuation_results = {}
+        self.finoracle_results = {} # Store forecast results
         self.stress_test_results = {}
         self.stress_test_results = {}
         self.rebalancing_plans = {}
@@ -582,6 +586,48 @@ class AnalysisOrchestrator:
         except Exception as e:
             print(f"   [WARN] Could not save valuation summary: {e}")
     
+    
+    def run_forecasting(self):
+        """Run FinOracle forecasting for all candidate stocks."""
+        if not self.config.enable_finoracle:
+            return
+
+        print("\n" + "="*70)
+        print("STEP 4.5: FINORACLE FORECASTING")
+        print("="*70)
+        
+        wrapper = FinOracleWrapper()
+        
+        for candidate in self.candidates:
+            ticker = candidate['ticker']
+            name = candidate['name']
+            
+            # Convert to RIC
+            ric = get_ric(ticker)
+            
+            try:
+                # Run Wrapper
+                # Note: We pass the stock-specific output dir so it creates 'finoracle/' inside it
+                stock_dir = self.get_stock_dir(ticker)
+                
+                result = wrapper.run_forecast(
+                    ticker=ticker,
+                    ric=ric,
+                    output_dir=stock_dir, # Wrapper will add /finoracle
+                    config=self.config
+                )
+                
+                self.finoracle_results[ticker] = result
+                
+                if 'error' in result:
+                    print(f"   [ERROR] {ticker}: {result['error']}")
+                else:
+                    print(f"   [OK] {ticker}: Forecast={result['forecast_price']:.2f}, Return={result['expected_return']:.2%}")
+                    
+            except Exception as e:
+                print(f"   [ERROR] {ticker} forecast failed: {e}")
+                self.finoracle_results[ticker] = {'error': str(e)}
+
     def generate_master_summary(self):
         """Generate a master summary report combining all analyses."""
         print("\n" + "="*70)
@@ -634,6 +680,13 @@ class AnalysisOrchestrator:
                     row['Missing Data'] = ', '.join(missing[:3]) + ('...' if len(missing) > 3 else '')
                 if warnings:
                     row['Data Warnings'] = ', '.join(warnings[:2]) + ('...' if len(warnings) > 2 else '')
+            
+            # Add FinOracle results
+            if ticker in self.finoracle_results and 'error' not in self.finoracle_results[ticker]:
+                fo = self.finoracle_results[ticker]
+                row['FinOracle Return'] = f"{fo.get('expected_return', 0):.2%}"
+                row['FinOracle Price'] = f"${fo.get('forecast_price', 0):.2f}"
+                row['FinOracle Horizon'] = f"{fo.get('horizon_days')}d"
             
             summary_rows.append(row)
         
@@ -702,7 +755,8 @@ class AnalysisOrchestrator:
             run_portfolio: bool = True,
             run_optimal: bool = True,
             run_backtests: bool = True, 
-            run_valuations: bool = True):
+            run_valuations: bool = True,
+            run_forecasting: bool = False):
         """Run the full analysis pipeline."""
         
         print("\n" + "=" * 35)
@@ -723,6 +777,12 @@ class AnalysisOrchestrator:
         
         if run_valuations:
             self.run_valuations()
+
+        if run_forecasting:
+            print(f"\n[DEBUG] run_forecasting=True, config.enable_finoracle={self.config.enable_finoracle}")
+            self.run_forecasting()
+        else:
+            print(f"\n[DEBUG] run_forecasting=False, skipping FinOracle step")
         
         self.generate_master_summary()
         self.save_config_summary()
@@ -749,19 +809,72 @@ class AnalysisOrchestrator:
 # =============================================================================
 
 def main():
-    """Main entry point."""
+    """Main entry point with CLI arguments."""
+    parser = argparse.ArgumentParser(description="ECE Portfolio Analysis Engine")
     
-    # Example Default Candidate Stocks
+    # Standard flags
+    parser.add_argument("--ticker", type=str, help="Run for specific ticker (adds to default list)")
+    parser.add_argument("--name", type=str, help="Name for the specific ticker")
+    parser.add_argument("--allocation", type=float, default=0.05, help="Allocation for specific ticker")
+    
+    # FinOracle flags
+    parser.add_argument("--finoracle", action="store_true", help="Enable FinOracle forecasting")
+    # Data Fetching
+    parser.add_argument("--fo-freq", type=str, default='d', help="Data frequency: tick, 1min, 5min, 1h, d, w, m")
+    parser.add_argument("--fo-days", type=int, default=None, help="Fetch last N days of data (overrides --fo-years)")
+    parser.add_argument("--fo-years", type=int, default=5, help="Fetch last N years of data (default: 5)")
+    parser.add_argument("--fo-start", type=str, default=None, help="Start date YYYY-MM-DD")
+    parser.add_argument("--fo-end", type=str, default=None, help="End date YYYY-MM-DD (default: today)")
+    parser.add_argument("--fo-skip-fetch", action="store_true", help="Reuse existing data.csv")
+    # Model Configuration
+    parser.add_argument("--fo-context", type=int, default=128, help="Context length L (32-1024)")
+    parser.add_argument("--fo-horizon", type=int, default=16, help="Forecast horizon H (1-256)")
+    parser.add_argument("--fo-optimize", action="store_true", help="Enable hyperparameter optimization")
+    parser.add_argument("--fo-trials", type=int, default=20, help="Optuna trials for optimization")
+    parser.add_argument("--fo-folds", type=int, default=3, help="CV folds for optimization")
+    parser.add_argument("--fo-cpu", action="store_true", help="Force CPU (no GPU)")
+    parser.add_argument("--fo-skip-inference", action="store_true", help="Skip model run (re-visualize old results)")
+    
+    args = parser.parse_args()
+    
+    # Initialize Config
+    config = AnalysisConfig()
+    
+    # Update config with FinOracle args
+    if args.finoracle:
+        config.enable_finoracle = True
+        config.finoracle_freq = args.fo_freq
+        config.finoracle_days = args.fo_days
+        config.finoracle_years = args.fo_years
+        config.finoracle_start = args.fo_start
+        config.finoracle_end = args.fo_end
+        config.finoracle_skip_fetch = args.fo_skip_fetch
+        config.finoracle_context_len = args.fo_context
+        config.finoracle_horizon_len = args.fo_horizon
+        config.finoracle_optimize = args.fo_optimize
+        config.finoracle_trials = args.fo_trials
+        config.finoracle_folds = args.fo_folds
+        config.finoracle_use_gpu = not args.fo_cpu
+        config.finoracle_skip_inference = args.fo_skip_inference
+    
+    # Build Candidate List
     candidate_stocks = [
         {'ticker': 'UNH', 'name': 'UnitedHealth Group', 'allocation': 0.05},
         {'ticker': 'TMO', 'name': 'Thermo Fisher', 'allocation': 0.03},
         {'ticker': 'V', 'name': 'Visa Inc.', 'allocation': 0.04},
     ]
+    
+    if args.ticker:
+        candidate_stocks.append({
+            'ticker': args.ticker,
+            'name': args.name if args.name else args.ticker,
+            'allocation': args.allocation
+        })
 
     orchestrator = AnalysisOrchestrator(
         candidates=candidate_stocks,
         output_base=OUTPUT_BASE,
-        config=AnalysisConfig(),
+        config=config,
         holdings=DEFAULT_TOP_HOLDINGS,
         sector_targets=DEFAULT_SECTOR_TARGETS
     )
@@ -770,30 +883,18 @@ def main():
         run_portfolio=True,
         run_optimal=True,
         run_backtests=True,
-        run_valuations=True
+        run_valuations=True,
+        run_forecasting=config.enable_finoracle
     )
     
     print(f"\n\n{'='*70}")
     print("ALL ANALYSES COMPLETE!")
     print(f"{'='*70}")
     print(f"\n[DIR] Results saved to: {output_dir}")
-    print("\nFolder structure:")
-    print("  ├── 0_portfolio/")
-    print("  │   ├── portfolio_risk_metrics.csv")
-    print("  │   ├── portfolio_weights.csv")
-    print("  │   └── portfolio_analysis_chart.png")
-    print("  ├── [TICKER]/")
-    print("  │   ├── optimal.png")
-    print("  │   ├── backtest.png")
-    print("  │   ├── valuation_dcf.png")
-    print("  │   └── ...")
-    print("  └── summary/")
-    print("      ├── master_summary.csv")
-    print("      └── analysis_report.txt")
     
     return orchestrator
 
 
 if __name__ == "__main__":
-    orchestrator = main()
+    main()
 

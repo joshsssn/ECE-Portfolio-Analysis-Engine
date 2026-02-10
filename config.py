@@ -43,6 +43,24 @@ class AnalysisConfig:
     # 6. Advanced Statistics
     use_ledoit_wolf: bool = True  # Use Covariance Shrinkage
 
+    # 7. FinOracle (Forecasting) Parameters
+    enable_finoracle: bool = False
+    # Data Fetching
+    finoracle_freq: str = 'd'           # tick, 1min, 5min, 1h, d, w, m
+    finoracle_days: int = None          # Fetch last N days (overrides years)
+    finoracle_years: int = 5            # Fetch last N years
+    finoracle_start: str = None         # Specific start date YYYY-MM-DD
+    finoracle_end: str = None           # Specific end date YYYY-MM-DD (default: today)
+    finoracle_skip_fetch: bool = False  # Reuse existing data.csv
+    # Model Configuration
+    finoracle_context_len: int = 128    # L: 32-1024
+    finoracle_horizon_len: int = 16     # H: 1-256
+    finoracle_optimize: bool = False    # AutoML hyperopt
+    finoracle_trials: int = 20          # Optuna trials
+    finoracle_folds: int = 3            # CV folds
+    finoracle_use_gpu: bool = True      # Use GPU if available
+    finoracle_skip_inference: bool = False  # Skip model run (re-visualize)
+
     def to_dict(self):
         """Convert config to dictionary."""
         return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}

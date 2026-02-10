@@ -213,7 +213,8 @@ def run_from_screener(csv_path: str,
                       run_backtests: bool = True,
                       run_valuations: bool = True,
                       multi_alloc_granularity: float = None,
-                      sprint1_options: dict = None):
+                      sprint1_options: dict = None,
+                      run_forecasting: bool = False):
     """
     Main function: load screener CSV and run full analysis.
     
@@ -278,7 +279,8 @@ def run_from_screener(csv_path: str,
         run_portfolio=run_portfolio,
         run_optimal=run_optimal,
         run_backtests=run_backtests,
-        run_valuations=run_valuations
+        run_valuations=run_valuations,
+        run_forecasting=run_forecasting
     )
     
     # Run multi-allocation analysis if requested
@@ -321,6 +323,24 @@ def main():
     parser.add_argument('--only-valuation', action='store_true', help='Only run valuation')
     parser.add_argument('--multi-alloc', '-m', type=float, nargs='?', const=0.5, default=None, help='Run multi-allocation analysis with granularity')
     
+    # FinOracle
+    parser.add_argument("--finoracle", action="store_true", help="Enable FinOracle forecasting")
+    # Data Fetching
+    parser.add_argument("--fo-freq", type=str, default='d', help="Data frequency: tick, 1min, 5min, 1h, d, w, m")
+    parser.add_argument("--fo-days", type=int, default=None, help="Fetch last N days of data (overrides --fo-years)")
+    parser.add_argument("--fo-years", type=int, default=5, help="Fetch last N years of data (default: 5)")
+    parser.add_argument("--fo-start", type=str, default=None, help="Start date YYYY-MM-DD")
+    parser.add_argument("--fo-end", type=str, default=None, help="End date YYYY-MM-DD (default: today)")
+    parser.add_argument("--fo-skip-fetch", action="store_true", help="Reuse existing data.csv")
+    # Model Configuration
+    parser.add_argument("--fo-context", type=int, default=128, help="Context length L (32-1024)")
+    parser.add_argument("--fo-horizon", type=int, default=16, help="Forecast horizon H (1-256)")
+    parser.add_argument("--fo-optimize", action="store_true", help="Enable hyperparameter optimization")
+    parser.add_argument("--fo-trials", type=int, default=20, help="Optuna trials for optimization")
+    parser.add_argument("--fo-folds", type=int, default=3, help="CV folds for optimization")
+    parser.add_argument("--fo-cpu", action="store_true", help="Force CPU (no GPU)")
+    parser.add_argument("--fo-skip-inference", action="store_true", help="Skip model run (re-visualize old results)")
+    
     # Configuration - Dynamic Parameters
     parser.add_argument('--risk-aversion', type=float, help='Risk aversion (gamma)')
     parser.add_argument('--concentration-penalty', type=float, help='Concentration penalty')
@@ -328,7 +348,7 @@ def main():
     parser.add_argument('--min-allocation', type=float, help='Min allocation range')
     parser.add_argument('--max-allocation', type=float, help='Max allocation range')
     parser.add_argument('--benchmark', type=str, help='Benchmark ticker')
-    parser.add_argument('--risk-free-rate', type=float, help='Risk free rate (e.g. 0.045 for 4.5%)')
+    parser.add_argument('--risk-free-rate', type=float, help='Risk free rate (e.g. 0.045 for 4.5%%)')
     parser.add_argument('--lookback-years', type=int, help='Lookback years')
     parser.add_argument('--resample-freq', type=str, choices=['D', 'W', 'M'], help='Resample frequency')
     parser.add_argument('--correlation-ticker', type=str, dest='tech_etf', help='Correlation Ticker (e.g. IXN)')
@@ -362,6 +382,23 @@ def main():
     if args.tech_etf: config.tech_etf_ticker = args.tech_etf
     if args.n_simulations: config.n_simulations = args.n_simulations
     if args.ledoit_wolf is not None: config.use_ledoit_wolf = args.ledoit_wolf
+    
+    # FinOracle Config
+    if args.finoracle:
+        config.enable_finoracle = True
+        config.finoracle_freq = args.fo_freq
+        config.finoracle_days = args.fo_days
+        config.finoracle_years = args.fo_years
+        config.finoracle_start = args.fo_start
+        config.finoracle_end = args.fo_end
+        config.finoracle_skip_fetch = args.fo_skip_fetch
+        config.finoracle_context_len = args.fo_context
+        config.finoracle_horizon_len = args.fo_horizon
+        config.finoracle_optimize = args.fo_optimize
+        config.finoracle_trials = args.fo_trials
+        config.finoracle_folds = args.fo_folds
+        config.finoracle_use_gpu = not args.fo_cpu
+        config.finoracle_skip_inference = args.fo_skip_inference
     
     # 2. Load Portfolio Data
     if args.holdings_csv:
@@ -426,7 +463,8 @@ def main():
         run_backtests=run_backtests,
         run_valuations=run_valuations,
         multi_alloc_granularity=multi_alloc_granularity,
-        sprint1_options=sprint1_options
+        sprint1_options=sprint1_options,
+        run_forecasting=config.enable_finoracle
     )
     
     return orchestrator
