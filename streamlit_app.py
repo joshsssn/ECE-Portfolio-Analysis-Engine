@@ -139,64 +139,106 @@ with st.sidebar.expander("⚖️ Rebalancing (NEW)", expanded=False):
         min_trade_value = 100
         round_to_lots = False
         
-# Sprint 0 Features - FinOracle 
-with st.sidebar.expander("🔮 FinOracle (BETA)", expanded=False):
-    enable_finoracle = st.checkbox("Enable FinOracle Forecasting", value=False,
-        help="Run AI-powered price forecasting using FinCast engine, not avaliable online yet")
+# Sprint 0 Features - FinOracle (Forecasting & Sentiment) 
+with st.sidebar.expander("🔮 FinOracle (Forecasting & AI)", expanded=False):
     
-    st.markdown("##### 📡 Data Fetching")
+    st.markdown("### 🧠 Forecasting")
+    enable_finoracle = st.checkbox("Enable Forecasting Engine", value=False,
+        help="Run AI-powered price forecasting using tiered models")
+    
+    # Model Selection (Multi-Select)
+    fo_models = st.multiselect(
+        "Select Models",
+        options=['arimax', 'lstm', 'gru', 'xgboost', 'random_forest', 'transformer', 'fts'],
+        default=['arimax', 'lstm', 'fts'],
+        disabled=not enable_finoracle,
+        help="Choose which models to run."
+    )
+    
+    enable_ensemble = st.checkbox("Enable Ensemble Average", value=True,
+        help="Calculate an average forecast from all selected models.", disabled=not enable_finoracle)
+    
+    st.markdown("##### 📡 Data Fetching (Refinitiv)")
     fo_freq = st.selectbox("Frequency", ["d", "w", "m", "1h", "5min", "1min", "tick"],
-        index=0, help="Data frequency for fetching & inference")
+        index=0, help="Data frequency for fetching & inference", disabled=not enable_finoracle)
     
     col_d1, col_d2 = st.columns(2)
     with col_d1:
         fo_days = st.number_input("Days (N)", min_value=0, value=0, step=30,
-            help="Fetch last N days. Set 0 to use Years instead.")
+            help="Fetch last N days. Set 0 to use Years instead.", disabled=not enable_finoracle)
         fo_days = fo_days if fo_days > 0 else None
     with col_d2:
         fo_years = st.number_input("Years", min_value=1, max_value=20, value=5, step=1,
-            help="Fetch last N years (ignored if Days > 0)")
+            help="Fetch last N years (ignored if Days > 0)", disabled=not enable_finoracle)
     
     col_s1, col_s2 = st.columns(2)
     with col_s1:
         fo_start = st.text_input("Start (YYYY-MM-DD)", value="",
-            help="Specific start date. Overrides Years.")
+            help="Specific start date. Overrides Years.", disabled=not enable_finoracle)
         fo_start = fo_start if fo_start.strip() else None
     with col_s2:
         fo_end = st.text_input("End (YYYY-MM-DD)", value="",
-            help="Specific end date. Default: today.")
+            help="Specific end date. Default: today.", disabled=not enable_finoracle)
         fo_end = fo_end if fo_end.strip() else None
     
-    fo_skip_fetch = st.checkbox("Skip Fetch (reuse data.csv)", value=False,
-        help="Skip data download — reuse the existing data.csv from a previous run")
+    fo_skip_fetch = st.checkbox("Skip Fetch (reuse cached data)", value=False,
+        help="Skip Refinitiv download — reuse existing local CSVs", disabled=not enable_finoracle)
     
-    st.markdown("##### 🧠 Model Configuration")
-    col_m1, col_m2 = st.columns(2)
-    with col_m1:
-        fo_context = st.number_input("Context L", min_value=32, max_value=1024, value=128, step=32,
-            help="Number of past data points the model sees (32-1024)")
-    with col_m2:
-        fo_horizon = st.number_input("Horizon H", min_value=1, max_value=256, value=16, step=1,
-            help="Number of future steps to predict (1-256)")
+    st.markdown("### 📰 Sentiment Analysis")
+    enable_sentiment = st.checkbox("Enable FinBERT Sentiment", value=False,
+        help="Analyze news headlines for sentiment scores (Independent of forecasting)")
     
-    fo_gpu = st.checkbox("Use GPU", value=True, help="Use GPU if available, else CPU")
+    sentiment_days = 30
+    enable_openrouter = False
+    openrouter_model = 'openrouter/free'
+    openrouter_key = None
     
-    fo_optimize = st.checkbox("Hyperopt (AutoML)", value=False,
-        help="Optimize L & H automatically via Optuna. Slow but finds best config.")
-    if fo_optimize:
-        col_o1, col_o2 = st.columns(2)
-        with col_o1:
-            fo_trials = st.number_input("Trials", min_value=5, max_value=200, value=20, step=5,
-                help="Number of Optuna trials")
-        with col_o2:
-            fo_folds = st.number_input("Folds", min_value=2, max_value=10, value=3, step=1,
-                help="CV folds for optimization")
+    if enable_sentiment:
+        sentiment_days = st.slider("News Lookback (days)", min_value=7, max_value=90, value=30, step=7,
+            help="How many days of news headlines to analyze")
+        enable_openrouter = st.checkbox("Enable OpenRouter LLM (deep analysis)", value=False,
+            help="Use a free LLM via OpenRouter API for full article analysis (1000 req/day free)")
+        if enable_openrouter:
+            openrouter_model = st.selectbox("OpenRouter Model", [
+                'openrouter/free',
+                'openai/gpt-oss-20b:free',
+                'nvidia/nemotron-3-nano-30b-a3b:free',
+                'tngtech/deepseek-r1t2-chimera:free',
+                'meta-llama/llama-3.3-70b-instruct:free',
+            ], index=0, help="Free model to use for deep article analysis")
+            openrouter_key = st.text_input("OpenRouter API Key", type="password",
+                value=os.environ.get("OPENROUTER_API_KEY", ""),
+                help="Get yours at openrouter.ai/keys")
+
+    st.markdown("##### ⚙️ Forecast Settings")
+    fo_horizon = st.number_input("Forecast Horizon (H)", min_value=1, max_value=256, value=16, step=1,
+        help="Number of future steps to predict. Applies to ALL selected models.", disabled=not enable_finoracle)
+
+    # FTS Specifics (Hidden if FTS not selected to clean UI)
+    if 'fts' in fo_models and enable_finoracle:
+        st.markdown("##### ⚙️ FTS Model Config")
+        fo_context = st.number_input("Context Length (L)", min_value=32, max_value=1024, value=128, step=32,
+            help="Number of past data points FTS uses as context.")
+        
+        fo_gpu = st.checkbox("Use GPU", value=True)
+        fo_optimize = st.checkbox("AutoML Hyperopt", value=False)
+        
+        if fo_optimize:
+            col_o1, col_o2 = st.columns(2)
+            with col_o1:
+                fo_trials = st.number_input("Trials", min_value=5, value=20)
+            with col_o2:
+                fo_folds = st.number_input("Folds", min_value=2, value=3)
+        else:
+            fo_trials, fo_folds = 20, 3
     else:
-        fo_trials = 20
-        fo_folds = 3
-    
+        # Defaults
+        fo_context = 128
+        fo_gpu, fo_optimize = True, False
+        fo_trials, fo_folds = 20, 3
+
     fo_skip_inference = st.checkbox("Skip Inference (re-visualize)", value=False,
-        help="Skip model run entirely. Use to re-display old results.")
+        help="Skip model run entirely. Use to re-display old results.", disabled=not enable_finoracle)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Portfolio Data")
@@ -401,6 +443,13 @@ if uploaded_file is not None or use_default_screener:
                     use_ledoit_wolf=use_ledoit_wolf,
                     # FinOracle Config (all flags)
                     enable_finoracle=enable_finoracle,
+                    enable_ensemble=enable_ensemble,
+                    enable_sentiment=enable_sentiment, # New independent flag
+                    sentiment_days=sentiment_days,
+                    enable_openrouter=enable_openrouter,
+                    openrouter_model=openrouter_model,
+                    openrouter_api_key=openrouter_key,
+                    finoracle_models=fo_models, # New model list
                     finoracle_freq=fo_freq,
                     finoracle_days=fo_days,
                     finoracle_years=fo_years,
@@ -518,6 +567,143 @@ if 'latest_run' in st.session_state:
 
                 if not finoracle_files:
                     st.info("No FinOracle results found in output directory.")
+            
+            # --- Sentiment Analysis Insights ---
+            st.markdown("---")
+            st.subheader("📊 Sentiment Analysis Insights")
+            
+            sentiment_results = {}
+            for stock_folder in output_dir.iterdir():
+                if stock_folder.is_dir():
+                    sentiment_dir = stock_folder / "sentiment"
+                    if sentiment_dir.exists():
+                        ticker = stock_folder.name
+                        csv_file = sentiment_dir / f"{ticker}_sentiment.csv"
+                        plot_file_finbert = sentiment_dir / f"{ticker}_sentiment.png"
+                        plot_file_llm = sentiment_dir / f"{ticker}_sentiment_llm.png"
+                        
+                        if csv_file.exists():
+                            try:
+                                df = pd.read_csv(csv_file)
+                                sentiment_results[ticker] = {
+                                    'df': df,
+                                    'plot_finbert': plot_file_finbert if plot_file_finbert.exists() else None,
+                                    'plot_llm': plot_file_llm if plot_file_llm.exists() else None
+                                }
+                            except Exception as e:
+                                st.warning(f"Could not load sentiment data for {ticker}: {e}")
+            
+            if sentiment_results:
+                for ticker, data in sentiment_results.items():
+                    df = data['df']
+                    plot_finbert = data['plot_finbert']
+                    plot_llm = data['plot_llm']
+                    
+                    # Calculate summary stats
+                    n_total = len(df)
+                    n_ai_analyzed = df['llm_summary'].notna().sum() if 'llm_summary' in df.columns else 0
+                    avg_sentiment = df['finbert_score'].mean() if 'finbert_score' in df.columns else 0
+                    
+                    # Determine overall sentiment
+                    if avg_sentiment > 0.15:
+                        sentiment_emoji = "🟢 BULLISH"
+                        sentiment_color = "green"
+                    elif avg_sentiment < -0.15:
+                        sentiment_emoji = "🔴 BEARISH"
+                        sentiment_color = "red"
+                    else:
+                        sentiment_emoji = "🟡 NEUTRAL"
+                        sentiment_color = "orange"
+                    
+                    with st.expander(f"{ticker} — {sentiment_emoji} (avg: {avg_sentiment:.3f})", expanded=True):
+                        # Show plots in tabs if both exist, otherwise just show FinBERT
+                        if plot_llm:
+                            tab1, tab2 = st.tabs(["📰 FinBERT (Headlines)", "🤖 AI/LLM (Deep Analysis)"])
+                            with tab1:
+                                if plot_finbert:
+                                    st.image(str(plot_finbert), caption=f"{ticker} FinBERT Sentiment", use_container_width=True)
+                            with tab2:
+                                st.image(str(plot_llm), caption=f"{ticker} AI Deep Sentiment", use_container_width=True)
+                        elif plot_finbert:
+                            st.image(str(plot_finbert), caption=f"{ticker} FinBERT Sentiment", use_container_width=True)
+                        
+                        # Summary metrics
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Headlines Analyzed", n_total)
+                        with col2:
+                            st.metric("AI Deep Analysis", f"{n_ai_analyzed}/{n_total}")
+                        with col3:
+                            st.metric("Avg Sentiment", f"{avg_sentiment:.3f}", delta_color="normal")
+                        
+                        # AI Insights Table (only if LLM analysis was done)
+                        if n_ai_analyzed > 0 and 'llm_summary' in df.columns:
+                            st.markdown("##### 🤖 AI-Generated Insights")
+                            
+                            # Filter to only articles with AI analysis
+                            ai_df = df[df['llm_summary'].notna()].copy()
+                            
+                            # Prepare display dataframe
+                            display_cols = ['date', 'title']
+                            if 'llm_sentiment' in ai_df.columns:
+                                display_cols.append('llm_sentiment')
+                            if 'llm_summary' in ai_df.columns:
+                                display_cols.append('llm_summary')
+                            if 'llm_risks' in ai_df.columns:
+                                display_cols.append('llm_risks')
+                            if 'llm_opportunities' in ai_df.columns:
+                                display_cols.append('llm_opportunities')
+                            
+                            # Clean up column names for display
+                            display_df = ai_df[display_cols].copy()
+                            display_df.columns = [c.replace('llm_', '').replace('_', ' ').title() for c in display_df.columns]
+                            
+                            # Parse stringified lists back to python lists
+                            import ast
+                            def safe_parse_list(val):
+                                try:
+                                    if isinstance(val, str) and val.startswith('[') and val.endswith(']'):
+                                        return ast.literal_eval(val)
+                                    return val
+                                except:
+                                    return val
+
+                            if 'Risks' in display_df.columns:
+                                display_df['Risks'] = display_df['Risks'].apply(safe_parse_list)
+                            if 'Opportunities' in display_df.columns:
+                                display_df['Opportunities'] = display_df['Opportunities'].apply(safe_parse_list)
+
+                            # Display as interactive table
+                            st.dataframe(
+                                display_df,
+                                use_container_width=True,
+                                hide_index=True,
+                                column_config={
+                                    "Sentiment": st.column_config.NumberColumn(
+                                        "AI Sentiment",
+                                        help="LLM sentiment score (-1 to +1)",
+                                        format="%.3f"
+                                    ),
+                                    "Summary": st.column_config.TextColumn(
+                                        "Summary",
+                                        help="AI-generated article summary",
+                                        width="large"
+                                    ),
+                                    "Risks": st.column_config.ListColumn(
+                                        "Key Risks",
+                                        help="Risks identified by AI"
+                                    ),
+                                    "Opportunities": st.column_config.ListColumn(
+                                        "Key Opportunities",
+                                        help="Opportunities identified by AI"
+                                    )
+                                }
+                            )
+                        else:
+                            st.info("No AI deep analysis available for this ticker. Enable OpenRouter in settings to get detailed insights.")
+            else:
+                st.info("No sentiment analysis results found. Enable sentiment analysis in the sidebar to see insights.")
+
             
             # --- Main Download Button ---
             st.markdown("---")

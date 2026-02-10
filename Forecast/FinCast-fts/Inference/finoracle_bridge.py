@@ -18,11 +18,10 @@ import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action='ignore', category=RuntimeWarning)
 
-# ─── CRITICAL: Redirect stdout → stderr BEFORE any imports ───────────
-# FinCast prints "Loaded PyTorch FinCast..." at import time, which would
-# pollute stdout and break JSON parsing. Only our final JSON goes to real stdout.
-_real_stdout = sys.stdout
-sys.stdout = sys.stderr
+# ─── CRITICAL: Redirect stdout → stderr REMOVED for Direct Import ───────────
+# We now run in a unified environment and want logs to show up.
+# _real_stdout = sys.stdout
+# sys.stdout = sys.stderr
 
 # Add FinCast src to path
 INFERENCE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -313,5 +312,5 @@ if __name__ == "__main__":
             pass
 
     # Restore stdout and write the ONLY line of real output
-    sys.stdout = _real_stdout
+    # sys.stdout = _real_stdout
     print(json.dumps(result, default=_json_safe))

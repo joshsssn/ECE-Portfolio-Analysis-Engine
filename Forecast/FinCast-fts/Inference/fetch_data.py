@@ -86,7 +86,14 @@ def connect():
         print("  1. Refinitiv Workspace is running")
         print("  2. You are logged in")
         print("  3. The API proxy is enabled (Workspace > Settings > API)")
-        sys.exit(1)
+        # raise ConnectionError(f"Refinitiv connection failed: {e}")
+        # Return False or just suppress if we want soft failure, but here we want to know.
+        # Check if we should exit or raise. For library usage, raise is better.
+        # But for script usage, exit is fine.
+        # Let's start with a simple return/print to avoid killing the parent process.
+        print("   [Continuing without Refinitiv connection - data fetch may fail]")
+        # raise e 
+
 
 
 def fetch_close_prices(

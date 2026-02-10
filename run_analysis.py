@@ -588,44 +588,178 @@ class AnalysisOrchestrator:
     
     
     def run_forecasting(self):
-        """Run FinOracle forecasting for all candidate stocks."""
+        """Run FinOracle forecasting and Sentiment Analysis."""
+        
+        # 1. Sentiment Analysis (Decoupled)
+        if self.config.enable_sentiment:
+            print("\n" + "="*70)
+            print("STEP 4.4: SENTIMENT ANALYSIS (FinBERT + OpenRouter)")
+            print("="*70)
+            try:
+                from Forecast.Regular.sentiment_engine import run_sentiment_analysis
+                self.sentiment_results = {}
+                
+                for candidate in self.candidates:
+                    ticker = candidate['ticker']
+                    stock_dir = self.get_stock_dir(ticker)
+                    sentiment_dir = stock_dir / "sentiment"
+                    sentiment_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    try:
+                        summary = run_sentiment_analysis(
+                            ticker=ticker,
+                            output_dir=str(sentiment_dir),
+                            days=self.config.sentiment_days,
+                            enable_openrouter=self.config.enable_openrouter,
+                            openrouter_key=self.config.openrouter_api_key,
+                            openrouter_model=self.config.openrouter_model
+                        )
+                        if summary:
+                            self.sentiment_results[ticker] = summary
+                    except Exception as e:
+                        print(f"   ❌ Sentiment analysis failed for {ticker}: {e}")
+                
+                # Print summary
+                if self.sentiment_results:
+                    print(f"\n   📊 Sentiment Summary ({len(self.sentiment_results)} tickers):")
+                    for t, s in self.sentiment_results.items():
+                        print(f"      {t}: {s['overall_sentiment']} (avg={s['avg_score']:.3f})")
+                        
+            except ImportError as e:
+                print(f"   [ERROR] Could not import sentiment module: {e}")
+            
+        # 2. Forecasting
         if not self.config.enable_finoracle:
             return
 
         print("\n" + "="*70)
-        print("STEP 4.5: FINORACLE FORECASTING")
+        print("STEP 4.5: FINORACLE FORECASTING (Tiered)")
         print("="*70)
         
-        wrapper = FinOracleWrapper()
-        
+        # Import new forecasting modules
+        try:
+            from Forecast.Regular.forecasting_utils import get_market_data, add_technical_indicators, save_forecast_results, plot_all_forecasts
+            from Forecast.Regular.forecasting_tiers import ForecastingEngine
+        except ImportError as e:
+            print(f"   [ERROR] Could not import forecasting modules: {e}")
+            return
+
         for candidate in self.candidates:
             ticker = candidate['ticker']
-            name = candidate['name']
-            
-            # Convert to RIC
-            ric = get_ric(ticker)
+            print(f"\n--- Forecasting for {ticker} ---")
             
             try:
-                # Run Wrapper
-                # Note: We pass the stock-specific output dir so it creates 'finoracle/' inside it
                 stock_dir = self.get_stock_dir(ticker)
                 
-                result = wrapper.run_forecast(
-                    ticker=ticker,
-                    ric=ric,
-                    output_dir=stock_dir, # Wrapper will add /finoracle
-                    config=self.config
-                )
+                # Prepare forecast output directory
+                forecast_dir = stock_dir / "forecast"
+                forecast_dir.mkdir(parents=True, exist_ok=True)
                 
-                self.finoracle_results[ticker] = result
+                # A. Fetch Data (Refinitiv Bridge) - saves to timestamped run dir
+                df = get_market_data(ticker, freq=self.config.finoracle_freq, 
+                                     days=self.config.finoracle_days, 
+                                     years=self.config.finoracle_years,
+                                     output_dir=str(forecast_dir))
                 
-                if 'error' in result:
-                    print(f"   [ERROR] {ticker}: {result['error']}")
-                else:
-                    print(f"   [OK] {ticker}: Forecast={result['forecast_price']:.2f}, Return={result['expected_return']:.2%}")
+                if df.empty:
+                    print(f"   [WARN] No data fetched for {ticker}. Skipping.")
+                    continue
                     
+                # B. Add Indicators
+                df = add_technical_indicators(df)
+                
+                # C. Initialize Engine
+                engine = ForecastingEngine(str(forecast_dir))
+                
+                results = []
+                selected_models = self.config.finoracle_models or ['arimax'] 
+                
+                # D. Run Selected Tiers
+                # Mapping of model name to function
+                model_map = {
+                    'arimax': engine.run_arimax,
+                    'lstm': engine.run_lstm,
+                    'gru': engine.run_gru,
+                    'xgboost': engine.run_xgboost,
+                    'random_forest': engine.run_random_forest,
+                    'transformer': engine.run_transformer,
+                    'fts': lambda df: engine.run_fts(df, ticker, config_overrides={
+                        'context_len': self.config.finoracle_context_len,
+                        'horizon_len': self.config.finoracle_horizon_len,
+                        'optimize': self.config.finoracle_optimize,
+                        'trials': self.config.finoracle_trials,
+                        'folds': self.config.finoracle_folds,
+                        'use_gpu': self.config.finoracle_use_gpu,
+                        'skip_inference': self.config.finoracle_skip_inference
+                    })
+                }
+                
+                for model_name in selected_models:
+                    if model_name in model_map:
+                        try:
+                            func = model_map[model_name]
+                            if model_name == 'fts':
+                                res = func(df)
+                            else:
+                                res = func(df, steps=self.config.finoracle_horizon_len)
+                            
+                            if 'error' in res:
+                                print(f"   > {model_name.upper()} Error: {res['error']}")
+                            else:
+                                results.append(res)
+                                print(f"   > {model_name.upper()}: {res.get('forecast', [])[-1]:.2f}")
+                        except Exception as e:
+                            print(f"   > {model_name.upper()} Failed to run: {e}")
+
+                # E. Ensemble
+                ensemble_val = None
+                if self.config.enable_ensemble and len(results) > 0:
+                    try:
+                        ens_res = engine.run_ensemble(results)
+                        if ens_res:
+                             results.append(ens_res)
+                             ensemble_val = ens_res.get('forecast', [])[-1]
+                             print(f"   > ENSEMBLE: {ensemble_val:.2f}")
+                    except Exception as e:
+                        print(f"   [WARN] Ensemble failed: {e}")
+                
+                # F. Save & Plot
+                if results:
+                    save_forecast_results(df, results, str(forecast_dir))
+                    plot_all_forecasts(df, results, ticker, str(forecast_dir))
+                
+                    # Save main result for summary (using Ensemble or first model)
+                    primary_val = ensemble_val if ensemble_val else results[0].get('forecast', [])[-1]
+                    
+                    self.finoracle_results[ticker] = {
+                        'expected_return': (primary_val / df['Close'].iloc[-1]) - 1,
+                        'forecast_price': primary_val,
+                        'horizon_days': self.config.finoracle_horizon_len,
+                        'models': selected_models
+                    }
+                
+                # Save detailed JSON
+                import json
+                # Custom encoder for numpy types
+                def np_encoder(obj):
+                    if isinstance(obj, (np.int_, np.intc, np.intp, np.int8,
+                        np.int16, np.int32, np.int64, np.uint8,
+                        np.uint16, np.uint32, np.uint64)):
+                        return int(obj)
+                    elif isinstance(obj, (np.float_, np.float16, np.float32, 
+                        np.float64)):
+                        return float(obj)
+                    elif isinstance(obj, (np.ndarray,)):
+                        return obj.tolist()
+                    return str(obj)
+
+                with open(forecast_dir / "forecast_results.json", 'w') as f:
+                    json.dump(results, f, indent=4, default=np_encoder) 
+
             except Exception as e:
                 print(f"   [ERROR] {ticker} forecast failed: {e}")
+                import traceback
+                traceback.print_exc()
                 self.finoracle_results[ticker] = {'error': str(e)}
 
     def generate_master_summary(self):

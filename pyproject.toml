@@ -1,0 +1,55 @@
+[project]
+name = "ece"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "absl-py==2.2.2",
+    "annotated-types==0.7.0",
+    "arch",
+    "beartype==0.20.2",
+    "bottleneck==1.4.2",
+    "brotli==1.1.0",
+    "certifi",
+    "click==8.1.8",
+    "colt5-attention==0.11.1",
+    "einops==0.8.1",
+    "einx==0.3.0",
+    "huggingface-hub",
+    "jax",
+    "joblib",
+    "matplotlib",
+    "numpy<2.0.0",
+    "pandas",
+    "peft",
+    "pillow",
+    "plotly",
+    "pyportfolioopt",
+    "refinitiv-data",
+    "scikit-learn",
+    "scipy",
+    "seaborn",
+    "statsmodels",
+    "streamlit",
+    "ta",
+    "tensorflow",
+    "torch==2.4.0+cu124",
+    "transformers",
+    "utilsforecast",
+    "wandb",
+    "xgboost",
+    "yfinance",
+    "openai",
+]
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch" }
+[tool.uv]
+override-dependencies = [
+    "tensorflow-io-gcs-filesystem==0.31.0; sys_platform == 'win32'"
+]
+

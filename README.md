@@ -546,44 +546,298 @@ Win_Probability = % of MC simulations where Fair_Value > Current_Price
 
 ---
 
-## 🔮 Module 5: Time-Series Forecasting (FinCast)
+---
+
+## 🧠 Module 5: Hybrid Sentiment Analysis
 
 ### Purpose
 
-Leverage deep learning to forecast future price movements and volatility, providing an AI-driven edge to the valuation and risk models.
+Combine **local speed** (FinBERT) with **cloud intelligence** (OpenRouter LLMs) to provide a 360° view of market sentiment. It analyzes both headlines (quant) and full articles (qualitative) to generate actionable risks and opportunities.
 
-### Model: FinCast v1
+### Architecture
 
-Built on top of the cutting-edge customized Transformer architecture described in:
-**[FinCast: Financial Forecasting with Deep Learning](https://arxiv.org/abs/2508.19609)**
+```text
+┌──────────────────────────────────────────────────────────────────┐
+│                    Sentiment Pipeline                            │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌─────────────────┐      ┌──────────────────────────────────┐   │
+│  │  News Fetching  │      │  Layer 1: FinBERT-tone (Local)   │   │
+│  │ Refinitiv → yf  │──────│  yiyanghkust/finbert-tone        │   │
+│  │ headlines + body│      │  Score: positive/negative/neutral│   │
+│  └─────────────────┘      └──────────────────────────────────┘   │
+│                                     │                            │
+│                                     ▼                            │
+│                           ┌──────────────────────────────────┐   │
+│                           │  Layer 2: OpenRouter LLM (API)   │   │
+│                           │  Free: GPT-oss-20b, Nemotron...  │   │
+│                           │  Full article → deep analysis    │   │
+│                           │  (1000 req/day free tier)        │   │
+│                           └──────────────────────────────────┘   │
+│                                     │                            │
+│                                     ▼                            │
+│                           ┌──────────────────────────────────┐   │
+│                           │  Output: CSV + Plot + Summary    │   │
+│                           └──────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### Key Components
+
+1. **News Fetching**:
+
+   * **Refinitiv (Eikon)**: Primary source for institutional-grade news (Reuters).
+   * **yfinance**: Fallback source if Eikon is unavailable.
+2. **Layer 1: FinBERT (Quantitative)**:
+
+   * **Model**: `ProsusAI/finbert` (Safetensors version).
+   * **Function**: Instantly scores hundreds of headlines.
+   * **Output**: Sentiment score (-1 to +1) and label (Positive/Negative/Neutral).
+3. **Layer 2: AI Deep Analysis (Qualitative)**:
+
+   * **Model**: OpenRouter (e.g., `openai/gpt-oss-20b`, `nvidia/nemotron-3`).
+   * **Function**: Reads full article text to extract nuance.
+   * **Outputs**:
+     * **Summary**: 1-sentence executive summary.
+     * **Key Risks**: Bullet points of specific downsides.
+     * **Key Opportunities**: Bullet points of potential upside catalysts.
+     * **AI Sentiment**: A second opinion score based on deep reading.
 
 ### Usage
 
-To enable the forecasting module, add the `--finoracle` flag to your command:
+Enable sentiment analysis in the GUI (sidebar) or via CLI:
 
 ```bash
-python run_analysis.py --finoracle
+# Basic usage (FinBERT only)
+python run_analysis.py --sentiment
+
+# Enable OpenRouter Deep Analysis
+python run_analysis.py --sentiment --openrouter --or-model "openrouter/free"
 ```
 
-#### FinCast CLI Flags (check FORECAST_README.md for more information)
+### Outputs
 
-| Flag (not exhaustive)   | Default   | Description                                      |
-| ----------------------- | --------- | ------------------------------------------------ |
-| `--finoracle`         | `False` | Enable the FinCast forecasting pipeline          |
-| `--fo-freq`           | `d`     | Data frequency (tick, 1min, 5min, 1h, d, w, m)   |
-| `--fo-years`          | `5`     | Years of history to fetch for training/inference |
-| `--fo-context`        | `128`   | Context length (sliding window size)             |
-| `--fo-horizon`        | `16`    | Prediction horizon (how many steps ahead)        |
-| `--fo-optimize`       | `False` | Enable Optuna hyperparameter optimization        |
-| `--fo-cpu`            | `False` | Force CPU execution (disables CUDA)              |
-| `--fo-skip-inference` | `False` | Skip model run and reuse last generated results  |
+* **Interactive UI**: "Sentiment Analysis Insights" section in Streamlit with tabs for FinBERT vs AI plots and a detailed insights table.
+* **Files**:
+  * `{TICKER}_sentiment.csv`: Detailed logs including raw text and scores.
+  * `{TICKER}_sentiment.png`: FinBERT score timeline.
+  * `{TICKER}_sentiment_llm.png`: AI Deep Analysis timeline.
 
-### Key Features
+---
 
-* **Transformer Architecture**: Captures long-range dependencies in time-series data.
-* **Probabilistic Forecasting**: Provides confidence intervals, not just point estimates.
-* **GPU Acceleration**: Optimized for CUDA to ensure fast inference.
-* **Integrated Insights**: Forecasts are fed into the valuation summary for a holistic view.
+## 🔮 Module 6: FinOracle - AI-Powered Forecasting
+
+### Purpose
+
+Leverage **7 state-of-the-art forecasting models** to predict future price movements, providing an AI-driven edge to valuation and risk analysis. FinOracle combines classical time-series methods with cutting-edge deep learning to deliver robust, ensemble-based predictions.
+
+### Architecture Overview
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                    FinOracle Pipeline                       │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
+│  │   ARIMAX     │  │     LSTM     │  │     GRU      │       │
+│  │ (Classical)  │  │  (RNN-based) │  │  (RNN-based) │       │
+│  └──────────────┘  └──────────────┘  └──────────────┘       │
+│                                                             │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
+│  │   XGBoost    │  │Random Forest │  │ Transformer  │       │
+│  │ (Gradient)   │  │  (Ensemble)  │  │ (Attention)  │       │
+│  └──────────────┘  └──────────────┘  └──────────────┘       │
+│                                                             │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │              FTS (Foundation Model)                  │   │
+│  │    FinCast Transformer - 4GB Pretrained Weights      │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                             │
+│                          ↓                                  │
+│                   ┌──────────────┐                          │
+│                   │   Ensemble   │                          │
+│                   │   Average    │                          │
+│                   └──────────────┘                          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Forecasting Models
+
+| Model                   | Type                | Strengths                                    | Horizon        |
+| ----------------------- | ------------------- | -------------------------------------------- | -------------- |
+| **ARIMAX**        | Statistical         | Captures trends + seasonality + exogenous    | Configurable   |
+| **LSTM**          | Deep Learning (RNN) | Long-term dependencies, sequential patterns  | Configurable   |
+| **GRU**           | Deep Learning (RNN) | Faster than LSTM, good for shorter sequences | Configurable   |
+| **XGBoost**       | Gradient Boosting   | Non-linear patterns, feature interactions    | Configurable   |
+| **Random Forest** | Ensemble (Trees)    | Robust to noise, handles outliers well       | Configurable   |
+| **Transformer**   | Attention-based     | Multi-head attention, parallel processing    | Configurable   |
+| **FTS (FinCast)** | Foundation Model    | Pretrained on financial data, probabilistic  | Up to 256 days |
+| **Ensemble**      | Meta-model          | Averages all models for robust prediction    | Auto-aligned   |
+
+### Usage
+
+Enable FinOracle forecasting with the `--finoracle` flag:
+
+```bash
+# Basic usage with default settings
+python run_analysis.py --finoracle
+
+# Custom horizon and models
+python run_analysis.py --finoracle --fo-horizon 30 --fo-models arimax lstm fts
+
+# Enable ensemble averaging
+python run_analysis.py --finoracle --fo-ensemble
+
+# Run from screener with forecasting
+python run_from_screener.py --finoracle --top 5
+```
+
+### CLI Parameters
+
+#### Data Fetching (Refinitiv)
+
+| Flag                | Default   | Description                                    |
+| ------------------- | --------- | ---------------------------------------------- |
+| `--fo-freq`       | `d`     | Data frequency (tick, 1min, 5min, 1h, d, w, m) |
+| `--fo-days`       | `0`     | Fetch last N days (0 = use years instead)      |
+| `--fo-years`      | `5`     | Years of history to fetch                      |
+| `--fo-start`      | `None`  | Start date (YYYY-MM-DD) - overrides years      |
+| `--fo-end`        | `None`  | End date (YYYY-MM-DD) - default: today         |
+| `--fo-skip-fetch` | `False` | Skip data download, reuse cached CSV           |
+
+#### Model Selection
+
+| Flag              | Default                       | Description                             |
+| ----------------- | ----------------------------- | --------------------------------------- |
+| `--fo-models`   | `['arimax', 'lstm', 'fts']` | Models to run (space-separated list)    |
+| `--fo-ensemble` | `True`                      | Enable ensemble averaging across models |
+
+**Available models**: `arimax`, `lstm`, `gru`, `xgboost`, `random_forest`, `transformer`, `fts`
+
+#### Forecast Settings
+
+| Flag             | Default | Description                              |
+| ---------------- | ------- | ---------------------------------------- |
+| `--fo-horizon` | `16`  | Forecast horizon (applies to ALL models) |
+
+#### FTS-Specific (Foundation Model)
+
+| Flag                    | Default   | Description                                   |
+| ----------------------- | --------- | --------------------------------------------- |
+| `--fo-context`        | `128`   | Context length (sliding window size)          |
+| `--fo-optimize`       | `False` | Enable Optuna hyperparameter optimization     |
+| `--fo-trials`         | `20`    | Number of Optuna trials (if optimize enabled) |
+| `--fo-folds`          | `3`     | Cross-validation folds (if optimize enabled)  |
+| `--fo-cpu`            | `False` | Force CPU execution (disables CUDA)           |
+| `--fo-skip-inference` | `False` | Skip model run, reuse last results            |
+
+### Output Structure
+
+For each ticker, FinOracle generates:
+
+```text
+analysis_outputs/run_{TIMESTAMP}/{TICKER}/forecast/
+├── data.csv                           # Raw fetched data
+├── {TICKER}_O_d_{TIMESTAMP}.csv       # Timestamped data backup
+├── combined_forecasts.csv             # All model predictions
+│
+├── {TICKER}_arimax_context.png        # Per-model context plots
+├── {TICKER}_arimax_zoomed.png         # Per-model zoomed plots
+├── {TICKER}_lstm_context.png
+├── {TICKER}_lstm_zoomed.png
+├── {TICKER}_gru_context.png
+├── {TICKER}_gru_zoomed.png
+├── {TICKER}_xgboost_context.png
+├── {TICKER}_xgboost_zoomed.png
+├── {TICKER}_randomforest_context.png
+├── {TICKER}_randomforest_zoomed.png
+├── {TICKER}_transformer_context.png
+├── {TICKER}_transformer_zoomed.png
+├── {TICKER}_fts_context.png
+├── {TICKER}_fts_zoomed.png
+├── {TICKER}_ensemble_context.png      # Ensemble average
+├── {TICKER}_ensemble_zoomed.png
+│
+└── finoracle/                         # FTS-specific outputs
+    ├── fincast_full_{TICKER}.csv      # FTS probabilistic forecast
+    ├── finoracle_{TICKER}_forecast.png
+    ├── finoracle_{TICKER}_context.png
+    ├── finoracle_{TICKER}_zoomed.png
+    └── run_config.txt                 # FTS configuration log
+```
+
+### Plot Styles
+
+All plots use a **dark-themed FTS style** with:
+
+- **Context Plot**: 30 days of history + full forecast horizon
+- **Zoomed Plot**: Last 10 days + forecast with trend annotation
+- Color scheme: Dark background (#1a1a2e), cyan history (#4cc9f0), red forecast (#e63946)
+
+### Combined Forecasts CSV
+
+The `combined_forecasts.csv` contains date-indexed predictions:
+
+| Date       | ARIMAX | LSTM   | GRU    | XGBoost | RandomForest | Transformer | FTS    | Ensemble |
+| ---------- | ------ | ------ | ------ | ------- | ------------ | ----------- | ------ | -------- |
+| 2026-02-11 | 639.72 | 570.78 | 632.05 | 639.72  | 637.74       | 691.54      | 677.96 | 652.69   |
+| 2026-02-12 | 640.15 | 571.23 | 632.48 | 640.15  | 638.12       | 692.01      | 678.42 | 653.08   |
+| ...        | ...    | ...    | ...    | ...     | ...          | ...         | ...    | ...      |
+
+*Note: Shorter forecasts are NaN-padded to match the longest horizon.*
+
+### Integration with Valuation
+
+Forecast results are automatically integrated into the master summary:
+
+```text
+[FINORACLE] IDXX Forecast (Ensemble, H=24):
+   Expected Price: $652.69 (+2.1%)
+   Models: ARIMAX, LSTM, GRU, XGBoost, RF, Transformer, FTS
+```
+
+### Technical Details
+
+#### Model Implementations
+
+- **ARIMAX**: `statsmodels.tsa.arima.model.ARIMA` with technical indicators as exogenous variables
+- **LSTM/GRU**: TensorFlow/Keras with 60-day lookback, dropout regularization
+- **XGBoost/RF**: Scikit-learn with recursive multi-step forecasting
+- **Transformer**: Keras MultiHeadAttention with positional encoding
+- **FTS**: PyTorch-based foundation model (4GB weights) with probabilistic output
+
+#### Ensemble Logic
+
+The ensemble forecast is computed as:
+
+```python
+ensemble = mean([model1_forecast[:min_len], model2_forecast[:min_len], ...])
+```
+
+Where `min_len` is the shortest forecast length among all models to handle horizon mismatches.
+
+### GPU Acceleration
+
+- **Automatic CUDA detection** for TensorFlow and PyTorch models
+- **FTS**: Requires CUDA-capable GPU for optimal performance (falls back to CPU if unavailable)
+- **Memory**: ~6GB VRAM recommended for FTS with context=128
+
+### Example Workflow
+
+```bash
+# 1. Fetch 3 years of daily data for AAPL
+# 2. Run ARIMAX, LSTM, and FTS models
+# 3. Generate 30-day forecast
+# 4. Create ensemble average
+# 5. Output plots and CSV
+
+python run_analysis.py \
+  --finoracle \
+  --fo-years 3 \
+  --fo-horizon 30 \
+  --fo-models arimax lstm fts \
+  --fo-ensemble
+```
 
 ---
 
@@ -658,16 +912,16 @@ analysis_outputs/run_{TIMESTAMP}/
 
 ### (assuming you run Windows)
 
-1) Open a CMD/PowerShell in the root folder and run `pip install -r requirements.txt` or create a virtual environement and install the dependencies in it.
-2) In Forecast/FinCast-fts/ open a Git Bash and type `bash setup_env.sh`
+1) Open a CMD/PowerShell in the root folder and run `uv sync`
+2) Activate the venv by running `.\.venv\Scripts\activate.ps1`
+3) Run `uv run python Forecast\FinCast-fts\Inference\download_model.py` (optional, only if you want to download the Frontier model)
 
 Few notes :
 
-- If you don't have Git Bash installed, you can download it from [here](https://git-scm.com/downloads)
 - If you don't have Python installed, you can download it from [here](https://www.python.org/downloads/) (make sure to install Python 3.10 or higher).
-- I recommend using uv for dependency management, you can install it from [here](https://astral.sh/uv/install.sh) (the bash script installs it anyway because we need it for the forecast pipeline lol)
+- If you don't have uv installed, you can install it from [here](https://astral.sh/uv/install.sh)
 - You'll also need CUDA installed for the GPU acceleration (if you don't have a CUDA compatible GPU or no GPU at all, you can skip this step). You can download it from [here](https://developer.nvidia.com/cuda-downloads)
-- Depending on your CUDA version, you may need to install a specific version of PyTorch. You can check the compatibility of PyTorch with CUDA versions [here](https://pytorch.org/get-started/locally/) and modify the /Forecast/FinCast-fts/requirements.txt file accordingly.
+- Depending on your CUDA version, you may need to install a specific version of PyTorch. You can check the compatibility of PyTorch with CUDA versions [here](https://pytorch.org/get-started/locally/) and modify the pyproject.toml file accordingly.
 
 ---
 

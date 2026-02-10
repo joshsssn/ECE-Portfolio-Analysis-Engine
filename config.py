@@ -45,6 +45,14 @@ class AnalysisConfig:
 
     # 7. FinOracle (Forecasting) Parameters
     enable_finoracle: bool = False
+    enable_ensemble: bool = True        # Aggregate predictions from selected models
+    enable_sentiment: bool = False      # Independent Sentiment Analysis
+    sentiment_days: int = 30            # Days of news to look back
+    enable_openrouter: bool = False     # Enable OpenRouter LLM deep analysis
+    openrouter_model: str = 'openrouter/free'  # OpenRouter model ID
+    openrouter_api_key: str = None      # OpenRouter API key (or env OPENROUTER_API_KEY)
+    finoracle_models: list = None       # List of selected models
+    
     # Data Fetching
     finoracle_freq: str = 'd'           # tick, 1min, 5min, 1h, d, w, m
     finoracle_days: int = None          # Fetch last N days (overrides years)
@@ -52,7 +60,7 @@ class AnalysisConfig:
     finoracle_start: str = None         # Specific start date YYYY-MM-DD
     finoracle_end: str = None           # Specific end date YYYY-MM-DD (default: today)
     finoracle_skip_fetch: bool = False  # Reuse existing data.csv
-    # Model Configuration
+    # Model Configuration (FTS specific)
     finoracle_context_len: int = 128    # L: 32-1024
     finoracle_horizon_len: int = 16     # H: 1-256
     finoracle_optimize: bool = False    # AutoML hyperopt
