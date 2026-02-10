@@ -5,3 +5,5 @@ scipy
 matplotlib
 seaborn
 streamlit
+scikit-learn
+PyPortfolioOpt

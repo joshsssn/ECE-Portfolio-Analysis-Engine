@@ -98,6 +98,47 @@ with st.sidebar.expander("Advanced Configuration"):
     resample = st.selectbox("Resample Frequency", ["W", "D", "M"], index=["W", "D", "M"].index(default_config.resample_freq))
     n_sims = st.number_input("Monte Carlo Sims", min_value=1, max_value=1000000000, value=default_config.n_simulations, step=1000)
 
+# Sprint 1 Features - Risk Management
+with st.sidebar.expander("🛡️ Risk Management (NEW)", expanded=False):
+    st.markdown("### Drawdown Protection")
+    enable_drawdown_protection = st.checkbox("Enable Drawdown Protection", value=True, 
+        help="Automatically reduce allocation when portfolio is in drawdown (Bridgewater-style)")
+    dd_threshold = st.slider("Drawdown Threshold (%)", 5.0, 30.0, 
+        float(default_config.drawdown_reduction_threshold * 100), 1.0,
+        help="Drawdown level that triggers position reduction") / 100.0
+    dd_reduction = st.slider("Reduction Factor", 0.1, 1.0, 
+        float(default_config.drawdown_reduction_factor), 0.1,
+        help="Multiply allocation by this factor during deep drawdown")
+    
+    st.markdown("### Stress Testing")
+    enable_stress_test = st.checkbox("Run Stress Tests", value=True,
+        help="Apply historical crisis scenarios (2008, COVID) to measure tail risk")
+    stress_portfolio_value = st.number_input("Portfolio Value ($)", 
+        min_value=10000, max_value=1000000000, value=1000000, step=100000,
+        help="Used for stress test dollar loss calculations")
+    
+    st.markdown("### Covariance Estimation")
+    use_ledoit_wolf = st.checkbox("Use Ledoit-Wolf Shrinkage", value=True,
+        help="Stabilizes covariance matrix for better allocation (recommended)")
+
+# Sprint 1 Features - Rebalancing
+with st.sidebar.expander("⚖️ Rebalancing (NEW)", expanded=False):
+    enable_rebalancing = st.checkbox("Generate Rebalancing Orders", value=False,
+        help="Generate executable trade orders to reach target weights")
+    if enable_rebalancing:
+        current_portfolio_value = st.number_input("Current Portfolio Value ($)", 
+            min_value=1000, max_value=1000000000, value=100000, step=10000)
+        min_trade_value = st.number_input("Min Trade Size ($)", 
+            min_value=10, max_value=10000, value=100, step=50,
+            help="Ignore trades smaller than this")
+        round_to_lots = st.checkbox("Round to 100-share lots", value=False,
+            help="For institutional compatibility")
+    else:
+        # Defaults when rebalancing is disabled
+        current_portfolio_value = 100000
+        min_trade_value = 100
+        round_to_lots = False
+
 st.sidebar.markdown("---")
 st.sidebar.subheader("Portfolio Data")
 uploaded_holdings = st.sidebar.file_uploader("Upload Holdings CSV", type=['csv'])
@@ -286,8 +327,24 @@ if uploaded_file is not None or use_default_screener:
                     lookback_years=lookback,
                     resample_freq=resample,
                     tech_etf_ticker=tech_etf,
-                    n_simulations=n_sims
+                    n_simulations=n_sims,
+                    # Sprint 1: Drawdown Protection
+                    drawdown_reduction_threshold=dd_threshold if enable_drawdown_protection else 1.0,
+                    drawdown_reduction_factor=dd_reduction if enable_drawdown_protection else 1.0,
+                    # Sprint 1: Ledoit-Wolf
+                    use_ledoit_wolf=use_ledoit_wolf,
                 )
+                
+                # Store Sprint 1 options for pipeline use
+                sprint1_options = {
+                    'enable_stress_test': enable_stress_test,
+                    'stress_portfolio_value': stress_portfolio_value,
+                    'use_ledoit_wolf': use_ledoit_wolf,
+                    'enable_rebalancing': enable_rebalancing,
+                    'rebalancing_portfolio_value': current_portfolio_value if enable_rebalancing else None,
+                    'min_trade_value': min_trade_value if enable_rebalancing else None,
+                    'round_to_lots': round_to_lots if enable_rebalancing else False,
+                }
                 
                 # 2. Load Portfolio Data
                 holdings = DEFAULT_TOP_HOLDINGS
@@ -325,7 +382,8 @@ if uploaded_file is not None or use_default_screener:
                     run_optimal=run_optimal,
                     run_backtests=run_backtests,
                     run_valuations=run_valuation,
-                    multi_alloc_granularity=multi_alloc_val
+                    multi_alloc_granularity=multi_alloc_val,
+                    sprint1_options=sprint1_options
                 )
             
             st.success("Analysis Complete!")

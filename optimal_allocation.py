@@ -37,6 +37,7 @@ warnings.filterwarnings('ignore')
 # =============================================================================
 from config import AnalysisConfig
 from portfolio_reconstruction import build_portfolio_weights, compute_portfolio_returns
+from covariance_estimator import estimate_covariance
 
 # =============================================================================
 # DATA CLASSES
@@ -176,27 +177,56 @@ def download_data(tickers: list, config: AnalysisConfig) -> pd.DataFrame:
 # OPTIMIZATION FUNCTIONS
 # =============================================================================
 
-def calculate_metrics(returns: pd.Series, risk_free: float = 0.04, 
-                      periods_per_year: int = 52) -> Tuple[float, float, float]:
-    """Calculate annualized return, volatility, and Sharpe ratio."""
-    n_periods = len(returns)
-    years = n_periods / periods_per_year
+def calculate_metrics(returns: pd.Series, risk_free_rate: float, periods: int, covariance_matrix=None, weight_vector=None) -> Tuple[float, float, float]:
+    """
+    Calculate essential risk/return metrics.
     
+    Parameters
+    ----------
+    returns : pd.Series
+        Asset or portfolio returns
+    risk_free_rate : float
+        Annual risk-free rate (e.g., 0.04)
+    periods : int
+        Periods per year (52 for weekly, 252 for daily)
+    covariance_matrix : np.ndarray, optional
+        Covariance matrix for volatility calculation (if using Ledoit-Wolf)
+    weight_vector : np.ndarray, optional
+        Weights corresponding to covariance matrix
+        
+    Returns
+    -------
+    (annualized_return, annualized_volatility, sharpe_ratio)
+    """
+    # 1. Annualized Return
     total_return = (1 + returns).prod() - 1
-    ann_return = (1 + total_return) ** (1 / years) - 1
-    ann_vol = returns.std() * np.sqrt(periods_per_year)
-    sharpe = (ann_return - risk_free) / ann_vol if ann_vol > 0 else 0
+    n_periods = len(returns)
+    years = n_periods / periods
+    annualized_return = (1 + total_return) ** (1 / years) - 1
     
-    return ann_return, ann_vol, sharpe
+    # 2. Annualized Volatility
+    if covariance_matrix is not None and weight_vector is not None:
+        # Use covariance matrix for volatility: sqrt(w'Sw)
+        portfolio_variance = np.dot(weight_vector.T, np.dot(covariance_matrix, weight_vector))
+        annualized_volatility = np.sqrt(portfolio_variance) * np.sqrt(periods)
+    else:
+        # Standard sample volatility
+        annualized_volatility = returns.std() * np.sqrt(periods)
+    
+    # 3. Sharpe Ratio
+    excess_return = annualized_return - risk_free_rate
+    sharpe_ratio = excess_return / annualized_volatility if annualized_volatility != 0 else 0
+    
+    return annualized_return, annualized_volatility, sharpe_ratio
 
 
-def calculate_utility(returns: pd.Series, allocation: float, config: AnalysisConfig) -> float:
+def calculate_utility(returns: pd.Series, allocation: float, config: AnalysisConfig, covariance_matrix=None, weight_vector=None) -> float:
     """
     Calculate Mean-Variance Utility with Concentration Penalty.
     
-    U = E[R] - (λ/2) × σ² - γ × w²
+    U = E[R] - (lambda/2) * var - gamma * w^2
     """
-    ann_return, ann_vol, _ = calculate_metrics(returns, config.risk_free_rate, 52 if config.resample_freq == 'W' else 252)
+    ann_return, ann_vol, _ = calculate_metrics(returns, config.risk_free_rate, 52 if config.resample_freq == 'W' else 252, covariance_matrix, weight_vector)
     
     # Base utility: return minus risk penalty
     base_utility = ann_return - (config.risk_aversion / 2) * (ann_vol ** 2)
@@ -240,10 +270,74 @@ def calculate_mctr(original_returns: pd.Series,
     return mctr
 
 
+def adjust_for_drawdown(
+    base_allocation: float, 
+    current_drawdown: float,
+    config: AnalysisConfig
+) -> float:
+    """
+    Reduce allocation if portfolio is in drawdown.
+    
+    Implements Bridgewater/CTA-style position sizing that automatically
+    reduces exposure during drawdowns to prevent losses from spiraling.
+    
+    Parameters
+    ----------
+    base_allocation : float
+        The optimal allocation under normal conditions (0-1)
+    current_drawdown : float
+        Current portfolio drawdown (negative value, e.g., -0.15 for -15%)
+    config : AnalysisConfig
+        Configuration with drawdown thresholds
+    
+    Returns
+    -------
+    float
+        Adjusted allocation
+    
+    Example
+    -------
+    >>> adjust_for_drawdown(0.10, -0.12, config)  # -12% drawdown
+    0.05  # Reduced to 50% of base allocation
+    """
+    # Ensure drawdown is negative or zero
+    current_drawdown = min(current_drawdown, 0)
+    
+    if current_drawdown < -config.drawdown_reduction_threshold:
+        # Deep drawdown: apply full reduction factor
+        return base_allocation * config.drawdown_reduction_factor
+    
+    elif current_drawdown < -config.drawdown_recovery_threshold:
+        # Moderate drawdown: linear interpolation between full and reduced
+        severity = (abs(current_drawdown) - config.drawdown_recovery_threshold) / \
+                   (config.drawdown_reduction_threshold - config.drawdown_recovery_threshold)
+        reduction = 1 - severity * (1 - config.drawdown_reduction_factor)
+        return base_allocation * reduction
+    
+    # No drawdown or minimal: return base allocation
+    return base_allocation
+
+
+def calculate_current_drawdown(returns: pd.Series) -> float:
+    """
+    Calculate current drawdown from peak.
+    
+    Returns
+    -------
+    float
+        Current drawdown (negative value)
+    """
+    cumulative = (1 + returns).cumprod()
+    running_max = cumulative.cummax()
+    current_drawdown = (cumulative.iloc[-1] - running_max.iloc[-1]) / running_max.iloc[-1]
+    return current_drawdown
+
+
 def scan_allocations(original_returns: pd.Series,
                      candidate_returns: pd.Series,
                      config: AnalysisConfig,
-                     n_steps: int = 50) -> Dict:
+                     n_steps: int = 50,
+                     covariance_matrix: np.ndarray = None) -> Dict:
     """
     Scan across allocation range and calculate metrics at each point.
     """
@@ -255,11 +349,21 @@ def scan_allocations(original_returns: pd.Series,
     utility_values = []
     mctr_values = []
     
+    periods = 52 if config.resample_freq == 'W' else 252
+    
     for alloc in allocations:
         blended = construct_blended_portfolio(original_returns, candidate_returns, alloc)
-        ann_ret, ann_vol, sharpe = calculate_metrics(blended, config.risk_free_rate, 52 if config.resample_freq == 'W' else 252)
-        utility = calculate_utility(blended, alloc, config)
-        mctr = calculate_mctr(original_returns, candidate_returns, alloc, 52 if config.resample_freq == 'W' else 252)
+        
+        # Prepare covariance-based volatility args if available
+        weight_vector = None
+        if covariance_matrix is not None:
+            weight_vector = np.array([1.0 - alloc, alloc])
+            
+        ann_ret, ann_vol, sharpe = calculate_metrics(blended, config.risk_free_rate, periods, 
+                                                     covariance_matrix, weight_vector)
+        
+        utility = calculate_utility(blended, alloc, config, covariance_matrix, weight_vector)
+        mctr = calculate_mctr(original_returns, candidate_returns, alloc, periods)
         
         sharpe_values.append(sharpe)
         vol_values.append(ann_vol * 100)  # Convert to percentage
@@ -375,13 +479,25 @@ def optimize_allocation(ticker: str, name: str, config: AnalysisConfig,
     correlation = aligned.iloc[:, 0].corr(aligned.iloc[:, 1])
     print(f"   Correlation with Portfolio: {correlation:.3f}")
     
+    # -------------------------------------------------------------------------
+    # COVARIANCE ESTIMATION (Ledoit-Wolf)
+    # -------------------------------------------------------------------------
+    covariance_matrix = None
+    if config.use_ledoit_wolf:
+        print(f"   [INFO] Using Ledoit-Wolf Shrinkage for Covariance Estimation")
+        try:
+            covariance_matrix = estimate_covariance(aligned, method='ledoit_wolf')
+        except Exception as e:
+            print(f"   [WARN] Ledoit-Wolf estimation failed, falling back to sample: {e}")
+    
     # Scan allocations
     print(f"\n2. Scanning allocations from {config.min_allocation*100:.0f}% to {config.max_allocation*100:.0f}%...")
     scan_data = scan_allocations(
         original_returns, 
         candidate_returns,
         config,
-        n_steps=50
+        n_steps=50,
+        covariance_matrix=covariance_matrix
     )
     
     # Find optima
@@ -389,25 +505,37 @@ def optimize_allocation(ticker: str, name: str, config: AnalysisConfig,
     
     # Method 1: Sharpe Optimization (for reference)
     sharpe_alloc, sharpe_value, sharpe_at_boundary = find_sharpe_optimal(scan_data)
-    print(f"   📈 SHARPE OPTIMIZATION (reference):")
+    print(f"   [SHARPE] SHARPE OPTIMIZATION (reference):")
     print(f"      Best Allocation: {sharpe_alloc*100:.1f}%")
     print(f"      Sharpe Ratio: {sharpe_value:.3f} (vs {orig_sharpe:.3f} original)")
     if sharpe_at_boundary:
-        print(f"      ⚠️  WARNING: Optimal is at {config.max_allocation*100:.0f}% cap - true optimal may be higher")
+        print(f"      [WARN]  WARNING: Optimal is at {config.max_allocation*100:.0f}% cap - true optimal may be higher")
     
     # Method 2: Minimum Volatility (for reference)
     minvol_alloc, min_vol = find_min_volatility(scan_data)
-    print(f"\n   📊 MIN VOLATILITY (reference):")
+    print(f"\n   [RISK] MIN VOLATILITY (reference):")
     print(f"      Best Allocation: {minvol_alloc*100:.1f}%")
     print(f"      Portfolio Vol: {min_vol:.2f}% (vs {orig_vol*100:.2f}% original)")
     
     # Method 3: Mean-Variance Utility (PRIMARY METHOD)
     utility_alloc, utility_value = find_utility_optimal(scan_data)
     orig_utility = calculate_utility(original_returns, 0.0, config)
-    print(f"\n   🎯 MEAN-VARIANCE UTILITY (λ={config.risk_aversion}, γ={config.concentration_penalty}):")
+    print(f"\n   [UTILITY] MEAN-VARIANCE UTILITY (λ={config.risk_aversion}, γ={config.concentration_penalty}):")
     print(f"      Best Allocation: {utility_alloc*100:.1f}%")
     print(f"      Utility: {utility_value:.2f}% (vs {orig_utility*100:.2f}% original)")
     print(f"      (γ penalizes high allocations → targets ~10%)")
+
+    # -------------------------------------------------------------------------
+    # DRAWDOWN PROTECTION (Sprint 1 Feature)
+    # -------------------------------------------------------------------------
+    current_dd = calculate_current_drawdown(candidate_returns)
+    adjusted_utility_alloc = adjust_for_drawdown(utility_alloc, current_dd, config)
+    
+    if adjusted_utility_alloc < utility_alloc:
+        print(f"\n   [PROTECT] DRAWDOWN PROTECTION ENABLED:")
+        print(f"      Asset is in {current_dd*100:.1f}% drawdown")
+        print(f"      Reducing allocation: {utility_alloc*100:.1f}% → {adjusted_utility_alloc*100:.1f}%")
+        utility_alloc = adjusted_utility_alloc
     
     # Combined recommendation: Use Utility Maximization as primary method
     print("\n4. Generating recommendation...")
@@ -423,10 +551,17 @@ def optimize_allocation(ticker: str, name: str, config: AnalysisConfig,
     
     # Calculate metrics at recommended allocation
     blended = construct_blended_portfolio(original_returns, candidate_returns, recommended)
-    new_ret, new_vol, new_sharpe = calculate_metrics(blended, config.risk_free_rate, periods)
+    
+    # Prepare weight vector if using covariance matrix
+    weight_vector = None
+    if covariance_matrix is not None:
+        weight_vector = np.array([1.0 - recommended, recommended])
+        
+    new_ret, new_vol, new_sharpe = calculate_metrics(blended, config.risk_free_rate, periods, 
+                                                     covariance_matrix, weight_vector)
     
     # Calculate new utility at recommended allocation
-    new_utility = calculate_utility(blended, recommended, config)
+    new_utility = calculate_utility(blended, recommended, config, covariance_matrix, weight_vector)
     
     # Create result
     result = OptimizationResult(

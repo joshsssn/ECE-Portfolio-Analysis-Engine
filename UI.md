@@ -130,6 +130,28 @@ Toggle which analysis modules to run:
 
 ⚠️ **Note**: Multi-allocation is computationally expensive. Enabled only when checkbox is ticked.
 
+### 🛡️ Risk Management (NEW)
+
+Enable institutional-grade risk controls:
+
+| Option                       | Default | Function                                                   |
+| ---------------------------- | ------- | ---------------------------------------------------------- |
+| **Drawdown Protection**      | ☑️      | Reduce weight if asset is >10% down from peak.             |
+| **Drawdown Threshold**       | 10%     | Level where protection kicks in.                           |
+| **Run Stress Tests**         | ☑️      | Simulate 2008 & COVID crashes on portfolio.                |
+| **Use Ledoit-Wolf**          | ☑️      | Stabilize covariance matrix (Recommended).                 |
+
+### ⚖️ Rebalancing (NEW)
+
+Generate executable orders to reach target weights:
+
+| Option                       | Default | Function                                                   |
+| ---------------------------- | ------- | ---------------------------------------------------------- |
+| **Enable Rebalancing**       | ☐       | Turn on/off order generation.                              |
+| **Portfolio Value ($)**      | $100k   | Total cash + equity value for sizing.                      |
+| **Min Trade Size**           | $100    | Filter out tiny trades to save fees.                       |
+| **Round to 100 Lots**        | ☐       | Institutional execution mode.                              |
+
 ### 📁 Portfolio Data
 
 Upload custom data to override defaults:

@@ -408,6 +408,40 @@ MIN_RECOMMENDED_ALLOCATION = 0.03 # Floor
 
 ---
 
+## 🛡️ Module 2b: Advanced Risk & Execution (Sprint 1)
+
+**New in v2.1**: A suite of professional-grade risk management tools inspired by hedge fund best practices.
+
+### 1. Advanced Risk Metrics
+Beyond standard volatility, we now calculate:
+*   **CVaR (95%)**: Conditional Value at Risk (Expected Shortfall) - usually 2x worse than VaR.
+*   **Sortino Ratio**: Like Sharpe, but only penalizes *downside* volatility.
+*   **Omega Ratio**: Probability weighted ratio of gains vs losses.
+
+### 2. Drawdown Protection (Bridgewater-style)
+*   **Logic**: Automatically reduces allocation if the asset is currently in a drawdown.
+*   **Example**: If an asset has an optimal weight of 10% but is down -15% from ATH, the system cuts allocation to 5% to preserve capital ("Cut losers fast").
+
+### 3. Stress Testing
+Simulates portfolio performance during historical crises:
+*   **2008 Financial Crisis**: Modeled as -37% drop (SPY proxy).
+*   **COVID-19 Crash**: Modeled as -34% drop.
+*   **Output**: Shows estimated $ loss and % drawdown for your specific portfolio.
+
+### 4. Ledoit-Wolf Shrinkage
+*   **Problem**: Standard covariance matrices are noisy and prone to estimation error with limited data.
+*   **Solution**: We use Ledoit-Wolf shrinkage to "pull" the correlation matrix towards a constant correlation target.
+*   **Benefit**: Mathematically stable borders and less extreme allocations.
+
+### 5. Rebalancing Execution
+Generates a precise **Trade List** to go from Current Portfolio → Target Portfolio.
+*   **Features**:
+    *   Round to 100-share lots (Institutional mode).
+    *   Minimum trade size filter (avoid $5 fees for $10 trades).
+    *   Turnover analysis.
+
+---
+
 ## 🔧 Module 3: Candidate Backtesting
 
 ### Purpose

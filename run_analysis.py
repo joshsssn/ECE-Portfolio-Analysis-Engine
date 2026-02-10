@@ -33,6 +33,7 @@ warnings.filterwarnings('ignore')
 # =============================================================================
 from config import AnalysisConfig
 from portfolio_loader import DEFAULT_TOP_HOLDINGS, DEFAULT_SECTOR_TARGETS
+from portfolio_reconstruction import build_portfolio_weights
 
 # Output directory base
 OUTPUT_BASE = Path("analysis_outputs")
@@ -49,12 +50,23 @@ class AnalysisOrchestrator:
     """Master orchestrator for the full analysis pipeline."""
     
     def __init__(self, candidates: list, output_base: Path = OUTPUT_BASE, config: AnalysisConfig = None,
-                 holdings: dict = None, sector_targets: dict = None):
+                 holdings: dict = None, sector_targets: dict = None, sprint1_options: dict = None):
         self.candidates = candidates
         self.output_base = output_base
         self.config = config if config else AnalysisConfig()
         self.holdings = holdings if holdings else DEFAULT_TOP_HOLDINGS
         self.sector_targets = sector_targets if sector_targets else DEFAULT_SECTOR_TARGETS
+        
+        # Sprint 1 options with defaults
+        self.sprint1_options = sprint1_options or {
+            'enable_stress_test': False,
+            'stress_portfolio_value': 1000000,
+            'use_ledoit_wolf': True,
+            'enable_rebalancing': False,
+            'rebalancing_portfolio_value': None,
+            'min_trade_value': 100,
+            'round_to_lots': False,
+        }
         
         self.run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.output_dir = self.output_base / f"run_{self.run_timestamp}"
@@ -71,6 +83,11 @@ class AnalysisOrchestrator:
         self.optimal_results = {}
         self.backtest_results = {}
         self.valuation_results = {}
+        self.stress_test_results = {}
+        self.stress_test_results = {}
+        self.rebalancing_plans = {}
+        self.reconstructed_weights = None
+        self.latest_prices = None
         
     def get_stock_dir(self, ticker: str) -> Path:
         """Get or create the output directory for a specific stock."""
@@ -85,7 +102,7 @@ class AnalysisOrchestrator:
         # Only create shared folders here; stock folders created on-demand
         for d in [self.portfolio_dir, self.summary_dir]:
             d.mkdir(parents=True, exist_ok=True)
-        print(f"\n📁 Output directory: {self.output_dir}")
+        print(f"\n[DIR] Output directory: {self.output_dir}")
         print(f"   Structure: [TICKER]/optimal.png, backtest.png, valuation_*.png")
     
     def run_portfolio_reconstruction(self):
@@ -100,13 +117,17 @@ class AnalysisOrchestrator:
             
             # Build weights
             portfolio_weights = pr.build_portfolio_weights(self.holdings, self.sector_targets)
+            self.reconstructed_weights = portfolio_weights
             
             # Download data
             tickers = list(portfolio_weights.keys()) + [self.config.benchmark_ticker]
             prices = pr.download_data(tickers, self.config)
+            prices = pr.clean_data(prices)
+            self.latest_prices = prices.iloc[-1]
             
             # Compute returns (returns tuple: portfolio_returns, all_returns)
             portfolio_returns, all_returns = pr.compute_portfolio_returns(prices, portfolio_weights, self.config.resample_freq)
+            self.all_returns = all_returns  # Save for rebalanced stress testing
             
             # Resample benchmark
             if self.config.resample_freq == 'W':
@@ -174,14 +195,76 @@ class AnalysisOrchestrator:
             plt.savefig(self.portfolio_dir / "portfolio_analysis_chart.png", dpi=150, bbox_inches='tight')
             plt.close(fig)
             
-            print(f"\n✅ Portfolio reconstruction complete")
+            print(f"\n[OK] Portfolio reconstruction complete")
             print(f"   Annualized Return: {metrics.get('Annualized Return (%)', 0):.2f}%")
             print(f"   Sharpe Ratio: {metrics.get('Sharpe Ratio', 0):.3f}")
             print(f"   Alpha: {metrics.get('Alpha (%)', 0):.2f}%")
             print(f"   Saved to: {self.portfolio_dir}")
             
+            # Store returns for stress testing
+            self.portfolio_returns = portfolio_returns
+            self.benchmark_returns = benchmark_returns
+            
         except Exception as e:
-            print(f"❌ Portfolio reconstruction failed: {e}")
+            print(f"[ERROR] Portfolio reconstruction failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return  # Don't run stress tests if reconstruction failed
+            
+        # Run stress tests if enabled (outside try/except for isolation)
+        self.run_stress_tests(self.portfolio_returns, self.benchmark_returns)
+    
+    
+    def run_stress_tests(self, portfolio_returns, benchmark_returns):
+        """Run stress tests on the portfolio if enabled."""
+        # Debug logging to file for reliable inspection
+        with open('stress_debug.log', 'w') as f:
+            f.write(f"sprint1_options: {self.sprint1_options}\n")
+            f.write(f"enable_stress_test: {self.sprint1_options.get('enable_stress_test', False)}\n")
+            f.write(f"portfolio_returns is None: {portfolio_returns is None}\n")
+            f.write(f"benchmark_returns is None: {benchmark_returns is None}\n")
+        
+        print(f"DEBUG: Checking stress test options: {self.sprint1_options}")
+        if not self.sprint1_options.get('enable_stress_test', False):
+            print("DEBUG: Stress test disabled in options")
+            return
+            
+        print("\n" + "="*70)
+        print(">> STRESS TESTING (Sprint 1)")
+        print("="*70)
+        
+        try:
+            from stress_testing import run_all_stress_tests, display_stress_test_results
+            
+            portfolio_value = self.sprint1_options.get('stress_portfolio_value', 1000000)
+            
+            results = run_all_stress_tests(
+                portfolio_returns, 
+                benchmark_returns,
+                portfolio_value=portfolio_value
+            )
+            self.stress_test_results = results
+            
+            # Display results
+            display_stress_test_results(results)
+            
+            # Save to CSV
+            rows = []
+            for scenario_id, r in results.items():  # Iterate over dict items
+                rows.append({
+                    'Scenario': r.scenario_name,  # Fixed attribute name
+                    'Market Drawdown (%)': f"{r.market_drawdown*100:.1f}%",
+                    'Estimated Portfolio Drawdown (%)': f"{r.estimated_drawdown*100:.1f}%",
+                    'Expected Loss ($)': f"${abs(r.estimated_loss_usd):,.0f}",  # Fixed attribute name
+                    'Portfolio Beta': f"{r.portfolio_beta:.2f}",
+                    'Recovery Time (months)': r.recovery_estimate_months,  # Fixed attribute name
+                })
+            pd.DataFrame(rows).to_csv(self.portfolio_dir / "stress_test_results.csv", index=False)
+            
+            print(f"\n[OK] Stress test results saved to: {self.portfolio_dir / 'stress_test_results.csv'}")
+            
+        except Exception as e:
+            print(f"[ERROR] Stress testing failed: {e}")
             import traceback
             traceback.print_exc()
     
@@ -194,7 +277,7 @@ class AnalysisOrchestrator:
         try:
             from optimal_allocation import optimize_allocation, plot_optimization
         except ImportError as e:
-            print(f"❌ Could not import optimal_allocation module: {e}")
+            print(f"   [ERROR] Could not import optimal_allocation module: {e}")
             return
         
         for candidate in self.candidates:
@@ -234,10 +317,150 @@ class AnalysisOrchestrator:
                     stock_dir / "optimal_summary.csv", index=False
                 )
                 
-                print(f"   ✅ {ticker}: Optimal allocation = {result.recommended_allocation*100:.1f}% ({result.recommendation_method})")
+                print(f"   [OK] {ticker}: Optimal allocation = {result.recommended_allocation*100:.1f}% ({result.recommendation_method})")
                 
+                # Sprint 1: Rebalancing - Generate orders to buy this candidate
+                if self.sprint1_options.get('enable_rebalancing', False) and result.recommended_allocation > 0:
+                     try:
+                        # Debug logging to file
+                        print(f"   >> Generating rebalancing orders for {ticker}...")
+                        from rebalancing import calculate_rebalancing_trades, display_rebalancing_plan
+                        
+                        # Build target weights
+                        # Logic:
+                        # 1. New candidate gets 'target_alloc'
+                        # 2. Existing holdings:
+                        #    - If current_total + new > 100%: Scale down existing pro-rata
+                        #    - If current_total + new <= 100%: Keep existing (use cash)
+                        
+                        target_alloc_pct = result.recommended_allocation * 100.0
+                        target_weights_100 = {ticker: target_alloc_pct}
+                        
+                        # Extract existing weights
+                        # Use reconstructed weights (FULL portfolio incl. ETFs) if available
+                        if self.reconstructed_weights:
+                            holding_weights = self.reconstructed_weights.copy()
+                        else:
+                            # Fallback to Top 10 only (should not happen if flow is right)
+                            holding_weights = {}
+                            for h_ticker, h_data in self.holdings.items():
+                                 if isinstance(h_data, dict):
+                                     holding_weights[h_ticker] = h_data.get('weight', 0)
+                                 else:
+                                     holding_weights[h_ticker] = h_data
+
+                        current_total_weight = sum(holding_weights.values())
+                        
+                        if current_total_weight + target_alloc_pct > 100.0:
+                            # Must scale down to fit (Cap at 100%)
+                            available_for_existing = 100.0 - target_alloc_pct
+                            scale_factor = available_for_existing / current_total_weight
+                        else:
+                            # Keep existing as is
+                            scale_factor = 1.0
+
+                        for h_ticker, h_weight in holding_weights.items():
+                            target_weights_100[h_ticker] = h_weight * scale_factor
+                            
+                        # Current prices (need to include candidate price)
+                        prices_map = self.latest_prices.to_dict() if self.latest_prices is not None else {}
+                        
+                        # Ensure candidate ticker is in prices_map
+                        if ticker not in prices_map:
+                            try:
+                                import yfinance as yf
+                                data = yf.download(ticker, period="5d", progress=False)
+                                if not data.empty:
+                                    if isinstance(data.columns, pd.MultiIndex):
+                                        latest_price = data['Close'].iloc[-1].iloc[0] if hasattr(data['Close'].iloc[-1], 'iloc') else data['Close'].iloc[-1]
+                                    else:
+                                        latest_price = data['Close'].iloc[-1]
+                                    prices_map[ticker] = float(latest_price)
+                            except Exception as e:
+                                print(f"[WARN] Failed to fetch price for {ticker}: {e}")
+                        
+
+
+
+
+
+                        # Convert holdings (weights % -> USD)
+                        # holding_weights now contains FULL portfolio (Top 10 + Sector ETFs)
+                        total_pv = self.sprint1_options.get('rebalancing_portfolio_value', 100000)
+                        current_holdings_usd = {}
+                        
+                        for h_ticker, h_weight in holding_weights.items():
+                             # Convert % weight to USD
+                             current_holdings_usd[h_ticker] = (h_weight / 100.0) * total_pv
+
+                        # Run rebalancing
+                        plan = calculate_rebalancing_trades(
+                            current_holdings=current_holdings_usd,
+                            target_weights=target_weights_100,  # Passed as % (0-100)
+                            current_prices=prices_map,
+                            portfolio_value=total_pv,
+                            min_trade_value=self.sprint1_options.get('min_trade_value', 100),
+                            round_lots=self.sprint1_options.get('round_to_lots', False)
+                        )
+
+                        
+                        self.rebalancing_plans[ticker] = plan
+                        
+                        # Save plan to CSV
+                        plan_df = pd.DataFrame([vars(o) for o in plan.orders])
+                        plan_df.to_csv(stock_dir / "rebalancing_orders.csv", index=False)
+                        print(f"   [OK] Rebalancing plan saved. {len(plan.orders)} trades generated.")
+
+                        # -----------------------------------------------------------------
+                        # ENHANCEMENT: Stress Test on Rebalanced Portfolio
+                        # -----------------------------------------------------------------
+                        if self.sprint1_options.get('enable_stress_test', False) and hasattr(self, 'all_returns'):
+                            try:
+                                print(f"   >> Running stress test on rebalanced portfolio (Pro-Forma)...")
+                                from stress_testing import run_all_stress_tests, stress_test_summary_df
+                                import yfinance as yf
+                                
+                                # 1. Fetch Candidate History
+                                start_date = pd.Timestamp.now() - pd.DateOffset(years=self.config.lookback_years)
+                                cand_hist = yf.download(ticker, start=start_date, progress=False)['Close']
+                                if isinstance(cand_hist, pd.DataFrame): cand_hist = cand_hist.iloc[:, 0]
+                                cand_ret = cand_hist.pct_change().dropna()
+                                
+                                # 2. Align with existing portfolio history
+                                aligned_data = self.all_returns.copy()
+                                aligned_data[ticker] = cand_ret
+                                aligned_data = aligned_data.dropna()
+                                
+                                if not aligned_data.empty:
+                                    # 3. Calculate Weighted Returns (Pro-Forma)
+                                    pro_forma_ret = pd.Series(0.0, index=aligned_data.index)
+                                    for t_res, w_pct in target_weights_100.items():
+                                        if t_res in aligned_data.columns:
+                                            pro_forma_ret += aligned_data[t_res] * (w_pct / 100.0)
+                                    
+                                    # 4. Run Stress Test
+                                    bench_ret = self.benchmark_returns.loc[aligned_data.index] if hasattr(self, 'benchmark_returns') else None
+                                    
+                                    if bench_ret is not None and not bench_ret.empty:
+                                        pf_results = run_all_stress_tests(pro_forma_ret, bench_ret, portfolio_value=total_pv)
+                                        pf_df = stress_test_summary_df(pf_results)
+                                        pf_df.to_csv(stock_dir / "stress_test_rebalanced.csv")
+                                        print(f"   [OK] Rebalanced stress test saved to: stress_test_rebalanced.csv")
+                                    else:
+                                        print(f"   [WARN] Missing benchmark data for Pro-Forma stress test.")
+                                else:
+                                    print(f"   [WARN] Not enough overlapping history for Pro-Forma stress test.")
+                            except Exception as e:
+                                print(f"   [ERROR] Rebalanced stress test failed: {e}")
+                        
+                     except Exception as e:
+                        print(f"   [ERROR] Rebalancing generation failed: {e}")
+                        with open('rebalancing_crash.txt', 'w') as f:
+                             import traceback
+                             traceback.print_exc(file=f)
+
             except Exception as e:
-                print(f"   ❌ {ticker} optimization failed: {e}")
+                print(f"   [ERROR] {ticker} optimization failed: {e}")
                 self.optimal_results[ticker] = {'error': str(e)}
         
         # Save combined summary
@@ -254,7 +477,7 @@ class AnalysisOrchestrator:
                     })
             if rows:
                 pd.DataFrame(rows).to_csv(self.summary_dir / "optimal_summary.csv", index=False)
-                print(f"\n   📊 Combined summary saved to: {self.summary_dir}")
+                print(f"\n   [STATS] Combined summary saved to: {self.summary_dir}")
     
     def run_backtests(self):
         """Run backtests for all candidate stocks."""
@@ -265,7 +488,7 @@ class AnalysisOrchestrator:
         try:
             from backtest_candidate import run_backtest
         except ImportError as e:
-            print(f"❌ Could not import backtest module: {e}")
+            print(f"   [ERROR] Could not import backtest module: {e}")
             return
         
         for candidate in self.candidates:
@@ -292,10 +515,10 @@ class AnalysisOrchestrator:
                 )
                 
                 self.backtest_results[ticker] = result
-                print(f"   ✅ {ticker} backtest complete")
+                print(f"   [OK] {ticker} backtest complete")
                 
             except Exception as e:
-                print(f"   ❌ {ticker} backtest failed: {e}")
+                print(f"   [ERROR] {ticker} backtest failed: {e}")
                 self.backtest_results[ticker] = {'error': str(e)}
     
     def run_valuations(self):
@@ -307,7 +530,7 @@ class AnalysisOrchestrator:
         try:
             from valuation_engine import ValuationEngine, RelativeValuation
         except ImportError as e:
-            print(f"❌ Could not import valuation module: {e}")
+            print(f"   [ERROR] Could not import valuation module: {e}")
             return
         
         engine = ValuationEngine(config=self.config)
@@ -344,10 +567,10 @@ class AnalysisOrchestrator:
                         save_path=str(stock_dir / "valuation_relative.png")
                     )
                 
-                print(f"   ✅ {ticker} valuation complete")
+                print(f"   [OK] {ticker} valuation complete")
                 
             except Exception as e:
-                print(f"   ❌ {ticker} valuation failed: {e}")
+                print(f"   [ERROR] {ticker} valuation failed: {e}")
                 import traceback
                 traceback.print_exc()
                 self.valuation_results[ticker] = {'error': str(e)}
@@ -357,7 +580,7 @@ class AnalysisOrchestrator:
             summary = engine.get_summary()
             summary.to_csv(self.summary_dir / "valuation_summary.csv", index=False)
         except Exception as e:
-            print(f"   ⚠️ Could not save valuation summary: {e}")
+            print(f"   [WARN] Could not save valuation summary: {e}")
     
     def generate_master_summary(self):
         """Generate a master summary report combining all analyses."""
@@ -423,8 +646,8 @@ class AnalysisOrchestrator:
         with open(self.summary_dir / "analysis_report.txt", 'w', encoding='utf-8') as f:
             f.write(report)
         
-        print(f"\n✅ Master summary saved to: {self.summary_dir}")
-        print(f"\n📊 ANALYSIS COMPLETE!")
+        print(f"\n[OK] Master summary saved to: {self.summary_dir}")
+        print(f"\n[STATS] ANALYSIS COMPLETE!")
         print(f"   All outputs in: {self.output_dir}")
     
     def _generate_text_report(self, summary_df):
@@ -462,9 +685,9 @@ class AnalysisOrchestrator:
             if 'BT: Sharpe Impact' in row:
                 lines.append(f"    Backtest Sharpe Impact: {row.get('BT: Sharpe Impact', 'N/A')}")
             if 'Missing Data' in row and row['Missing Data']:
-                lines.append(f"    ⚠️ Missing Data: {row['Missing Data']}")
+                lines.append(f"    [WARN] Missing Data: {row['Missing Data']}")
             if 'Data Warnings' in row and row['Data Warnings']:
-                lines.append(f"    ⚠️ Data Issues: {row['Data Warnings']}")
+                lines.append(f"    [WARN] Data Issues: {row['Data Warnings']}")
         
         lines.extend([
             "",
@@ -482,9 +705,9 @@ class AnalysisOrchestrator:
             run_valuations: bool = True):
         """Run the full analysis pipeline."""
         
-        print("\n" + "🚀" * 35)
+        print("\n" + "=" * 35)
         print("   MASTER ANALYSIS ORCHESTRATOR")
-        print("🚀" * 35)
+        print("=" * 35)
         print(f"\nCandidates: {[c['ticker'] for c in self.candidates]}")
         
         self.setup_directories()
@@ -502,8 +725,23 @@ class AnalysisOrchestrator:
             self.run_valuations()
         
         self.generate_master_summary()
+        self.save_config_summary()
         
         return self.output_dir
+
+    def save_config_summary(self):
+        """Save configuration parameters to text file."""
+        try:
+            params = self.config.to_dict()
+            with open(self.output_dir / "parameters.txt", "w") as f:
+                f.write("="*50 + "\n")
+                f.write("ANALYSIS RUN PARAMETERS\n")
+                f.write("="*50 + "\n\n")
+                for k, v in sorted(params.items()):
+                    f.write(f"{k}: {v}\n")
+            print(f"   [CONF] Parameters saved to: parameters.txt")
+        except Exception as e:
+            print(f"   [WARN] Failed to save parameters: {e}")
 
 
 # =============================================================================
@@ -538,7 +776,7 @@ def main():
     print(f"\n\n{'='*70}")
     print("ALL ANALYSES COMPLETE!")
     print(f"{'='*70}")
-    print(f"\n📂 Results saved to: {output_dir}")
+    print(f"\n[DIR] Results saved to: {output_dir}")
     print("\nFolder structure:")
     print("  ├── 0_portfolio/")
     print("  │   ├── portfolio_risk_metrics.csv")

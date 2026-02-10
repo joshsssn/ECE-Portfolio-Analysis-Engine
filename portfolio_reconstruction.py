@@ -58,8 +58,8 @@ def download_data(tickers: list, config: AnalysisConfig) -> pd.DataFrame:
     failed_tickers = [t for t in tickers if t not in prices.columns or prices[t].isna().all()]
     
     if failed_tickers:
-        print(f"   ⚠️ Initial download failed for: {failed_tickers}")
-        print(f"   🔄 Retrying with ^ prefix...")
+        print(f"   [WARN] Initial download failed for: {failed_tickers}")
+        print(f"   [RETRY] Retrying with ^ prefix...")
         
         # 3. Try fallback with ^ prefix for failed tickers
         retry_map = {f"^{t}": t for t in failed_tickers if not t.startswith('^')}
@@ -84,7 +84,7 @@ def download_data(tickers: list, config: AnalysisConfig) -> pd.DataFrame:
                 # Merge successful retries
                 for caret_ticker, original_ticker in retry_map.items():
                     if caret_ticker in retry_prices.columns and not retry_prices[caret_ticker].isna().all():
-                        print(f"   ✅ Successfully recovered {original_ticker} as {caret_ticker}")
+                        print(f"   [OK] Successfully recovered {original_ticker} as {caret_ticker}")
                         prices[original_ticker] = retry_prices[caret_ticker]
     
     # Final Validation
@@ -94,7 +94,7 @@ def download_data(tickers: list, config: AnalysisConfig) -> pd.DataFrame:
     
     if bad_tickers:
         error_msg = f"Error: Could not retrieve data for: {', '.join(bad_tickers)}. Please check symbol validity."
-        print(f"❌ {error_msg}")
+        print(f"[Error] {error_msg}")
         raise ValueError(error_msg)
     
     return prices
@@ -153,7 +153,7 @@ def calculate_sector_allocations(top_holdings: dict, target_sector_weights: dict
         print(f"  Used by Top 10:    {used_weight:6.2f}%")
         print(f"  Remaining for ETF: {remaining_weight:6.2f}%")
         if remaining_weight < target_weight and used_weight > 0:
-            print(f"  → Top 10 stocks cover {used_weight/target_weight*100:.1f}% of sector allocation")
+            print(f"  -> Top stocks cover {used_weight/target_weight*100:.1f}% of sector allocation")
     
     return allocations
 
@@ -433,6 +433,11 @@ def calculate_risk_metrics(portfolio_returns: pd.Series, benchmark_returns: pd.S
     var_95_annual = var_95 * np.sqrt(periods_per_year)
     metrics['VaR (95%, annualized)'] = var_95_annual * 100
     
+    # 6.5. CVaR / Expected Shortfall (average loss beyond VaR)
+    cvar_95 = port_ret[port_ret <= var_95].mean()
+    metrics['CVaR (95%, period)'] = cvar_95 * 100
+    metrics['CVaR (95%, annualized)'] = cvar_95 * np.sqrt(periods_per_year) * 100
+    
     # 7. Maximum Drawdown
     cumulative = (1 + port_ret).cumprod()
     running_max = cumulative.cummax()
@@ -453,6 +458,19 @@ def calculate_risk_metrics(portfolio_returns: pd.Series, benchmark_returns: pd.S
     excess_annual = metrics['Annualized Return (%)'] - (bench_annualized_return * 100)
     info_ratio = (excess_annual / 100) / tracking_error if tracking_error != 0 else 0
     metrics['Information Ratio'] = info_ratio
+    
+    # 11. Sortino Ratio (downside volatility only)
+    downside_returns = port_ret[port_ret < 0]
+    downside_std = downside_returns.std() * np.sqrt(periods_per_year) if len(downside_returns) > 0 else 0
+    sortino = excess_return / downside_std if downside_std > 0 else 0
+    metrics['Sortino Ratio'] = sortino
+    
+    # 12. Omega Ratio (gain/loss probability weighted)
+    threshold = 0  # Can also use risk_free_rate / periods_per_year
+    gains = port_ret[port_ret > threshold].sum()
+    losses = abs(port_ret[port_ret < threshold].sum())
+    omega = gains / losses if losses > 0 else float('inf')
+    metrics['Omega Ratio'] = omega
     
     return metrics
 
@@ -475,13 +493,14 @@ def display_risk_metrics(metrics: dict):
     
     # Format values
     format_pct = ['Annualized Return (%)', 'Annualized Volatility (%)', 'Alpha (%)',
-                  'VaR (95%, period)', 'VaR (95%, annualized)', 'Max Drawdown (%)', 
-                  'Tracking Error (%)']
+                  'VaR (95%, period)', 'VaR (95%, annualized)', 
+                  'CVaR (95%, period)', 'CVaR (95%, annualized)',
+                  'Max Drawdown (%)', 'Tracking Error (%)']
     
     for idx in df.index:
         if idx in format_pct:
             df.loc[idx, 'Formatted'] = f"{df.loc[idx, 'Value']:.2f}%"
-        elif idx in ['Sharpe Ratio', 'Information Ratio'] or idx.startswith('Beta vs'):
+        elif idx in ['Sharpe Ratio', 'Sortino Ratio', 'Omega Ratio', 'Information Ratio'] or idx.startswith('Beta vs'):
             df.loc[idx, 'Formatted'] = f"{df.loc[idx, 'Value']:.3f}"
         elif idx.startswith('Correlation vs'):
             df.loc[idx, 'Formatted'] = f"{df.loc[idx, 'Value']:.4f}"
@@ -708,18 +727,18 @@ def main():
     print("ANALYSIS COMPLETE")
     print("="*60)
     print("\nKey Findings:")
-    print(f"  • Annualized Return:    {metrics['Annualized Return (%)']:.2f}%")
-    print(f"  • Annualized Volatility: {metrics['Annualized Volatility (%)']:.2f}%")
-    print(f"  • Sharpe Ratio:          {metrics['Sharpe Ratio']:.3f}")
+    print(f"  * Annualized Return:    {metrics['Annualized Return (%)']:.2f}%")
+    print(f"  * Annualized Volatility: {metrics['Annualized Volatility (%)']:.2f}%")
+    print(f"  * Sharpe Ratio:          {metrics['Sharpe Ratio']:.3f}")
     
     beta_key = f'Beta vs {config.benchmark_ticker}'
     if beta_key in metrics:
-        print(f"  • {beta_key}:         {metrics[beta_key]:.3f}")
+        print(f"  * {beta_key}:         {metrics[beta_key]:.3f}")
     
     # Dynamic VaR label
     var_label = f"VaR (95%, {freq_label.lower()}):"
-    print(f"  • {var_label:21s} {metrics['VaR (95%, period)']:.2f}%")
-    print(f"  • Max Drawdown:          {metrics['Max Drawdown (%)']:.2f}%")
+    print(f"  * {var_label:21s} {metrics['VaR (95%, period)']:.2f}%")
+    print(f"  * Max Drawdown:          {metrics['Max Drawdown (%)']:.2f}%")
     
     return summary, portfolio_returns, benchmark_returns
 

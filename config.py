@@ -34,3 +34,16 @@ class AnalysisConfig:
     projection_years: int = 10
     terminal_growth_base: float = 0.025
     max_growth_rate: float = 0.10
+    
+    # 5. Drawdown Protection Parameters
+    drawdown_reduction_threshold: float = 0.10  # -10% drawdown triggers reduction
+    drawdown_reduction_factor: float = 0.50      # Reduce exposure to 50%
+    drawdown_recovery_threshold: float = 0.05   # -5% drawdown, start recovering
+    
+    # 6. Advanced Statistics
+    use_ledoit_wolf: bool = True  # Use Covariance Shrinkage
+
+    def to_dict(self):
+        """Convert config to dictionary."""
+        return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+

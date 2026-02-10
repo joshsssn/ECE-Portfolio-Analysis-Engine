@@ -15,6 +15,8 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 import sys
+# sys config removed
+
 
 from config import AnalysisConfig
 from portfolio_loader import load_holdings_csv, load_sector_targets_csv, DEFAULT_TOP_HOLDINGS, DEFAULT_SECTOR_TARGETS
@@ -50,7 +52,7 @@ MULTI_ALLOC_STEP = 0.005  # 0.5%
 
 def load_screener(csv_path: str) -> pd.DataFrame:
     """Load and validate screener CSV."""
-    print(f"\n📂 Loading screener: {csv_path}")
+    print(f"\n[LOAD] Loading screener: {csv_path}")
     
     df = pd.read_csv(csv_path)
     
@@ -134,7 +136,7 @@ def run_multi_allocation_for_screener(candidates: list, output_dir: Path,
         stock_dir = output_dir / ticker
         stock_dir.mkdir(exist_ok=True)
         
-        print(f"\n📊 Processing {ticker}: {name}")
+        print(f"\n[STOCK] Processing {ticker}: {name}")
         
         try:
             # Step 1: Find optimal allocation
@@ -191,10 +193,10 @@ def run_multi_allocation_for_screener(candidates: list, output_dir: Path,
             
             csv_path = stock_dir / f'{ticker}_multi_allocation.csv'
             master_df.to_csv(csv_path, index=False)
-            print(f"   [3/3] ✓ Saved: {csv_path}")
+            print(f"   [3/3] [OK] Saved: {csv_path}")
             
         except Exception as e:
-            print(f"   ❌ Error: {e}")
+            print(f"   [ERROR] Error: {e}")
     
     print("\n" + "="*70)
     print("MULTI-ALLOCATION ANALYSIS COMPLETE")
@@ -210,15 +212,40 @@ def run_from_screener(csv_path: str,
                       run_optimal: bool = True,
                       run_backtests: bool = True,
                       run_valuations: bool = True,
-                      multi_alloc_granularity: float = None):
+                      multi_alloc_granularity: float = None,
+                      sprint1_options: dict = None):
     """
     Main function: load screener CSV and run full analysis.
+    
+    Parameters
+    ----------
+    sprint1_options : dict, optional
+        Sprint 1 features configuration:
+        - enable_stress_test: bool
+        - stress_portfolio_value: float
+        - use_ledoit_wolf: bool  
+        - enable_rebalancing: bool
+        - rebalancing_portfolio_value: float
+        - min_trade_value: float
+        - round_to_lots: bool
     """
     from run_analysis import AnalysisOrchestrator, OUTPUT_BASE
     
-    print("\n" + "🔍" * 35)
+    print("\n" + "=" * 35)
     print("   SCREENER-BASED ANALYSIS")
-    print("🔍" * 35)
+    print("=" * 35)
+    
+    # Default sprint1 options
+    if sprint1_options is None:
+        sprint1_options = {
+            'enable_stress_test': False,
+            'stress_portfolio_value': 1000000,
+            'use_ledoit_wolf': True,
+            'enable_rebalancing': False,
+            'rebalancing_portfolio_value': None,
+            'min_trade_value': 100,
+            'round_to_lots': False,
+        }
     
     # Load screener
     df = load_screener(csv_path)
@@ -230,7 +257,7 @@ def run_from_screener(csv_path: str,
     
     print(f"\n   Candidates to analyze: {len(candidates)}")
     for c in candidates:
-        print(f"   • {c['ticker']}: {c['name']}")
+        print(f"   * {c['ticker']}: {c['name']}")
     
     # Create orchestrator with screener candidates
     orchestrator = AnalysisOrchestrator(
@@ -238,7 +265,8 @@ def run_from_screener(csv_path: str,
         output_base=OUTPUT_BASE,
         config=config,
         holdings=holdings,
-        sector_targets=sector_targets
+        sector_targets=sector_targets,
+        sprint1_options=sprint1_options  # Pass Sprint 1 options
     )
     
     # Run analysis
@@ -264,12 +292,12 @@ def run_from_screener(csv_path: str,
     # Copy screener to output for reference
     screener_copy_path = output_dir / 'input_screener.csv'
     df.to_csv(screener_copy_path, index=False)
-    print(f"\n📋 Input screener copied to: {screener_copy_path}")
+    print(f"\n[COPY] Input screener copied to: {screener_copy_path}")
     
     print(f"\n\n{'='*70}")
     print("SCREENER ANALYSIS COMPLETE!")
     print(f"{'='*70}")
-    print(f"\n📂 Results saved to: {output_dir}")
+    print(f"\n[DIR] Results saved to: {output_dir}")
     
     return orchestrator, output_dir
 
@@ -309,6 +337,14 @@ def main():
     # File inputs
     parser.add_argument('--holdings-csv', type=str, help='Path to holdings CSV')
     parser.add_argument('--sectors-csv', type=str, help='Path to sector targets CSV')
+
+    # Sprint 1 Features
+    parser.add_argument('--stress-test', action='store_true', help='Run stress tests')
+    parser.add_argument('--stress-value', type=float, default=1000000, help='Portfolio value for stress tests')
+    parser.add_argument('--ledoit-wolf', action='store_true', default=True, help='Use Ledoit-Wolf shrinkage (default: True)')
+    parser.add_argument('--no-ledoit-wolf', action='store_false', dest='ledoit_wolf', help='Disable Ledoit-Wolf shrinkage')
+    parser.add_argument('--rebalance', action='store_true', help='Generate rebalancing orders')
+    parser.add_argument('--rebalance-value', type=float, default=100000, help='Portfolio value for rebalancing')
     
     args = parser.parse_args()
     
@@ -325,6 +361,7 @@ def main():
     if args.resample_freq: config.resample_freq = args.resample_freq
     if args.tech_etf: config.tech_etf_ticker = args.tech_etf
     if args.n_simulations: config.n_simulations = args.n_simulations
+    if args.ledoit_wolf is not None: config.use_ledoit_wolf = args.ledoit_wolf
     
     # 2. Load Portfolio Data
     if args.holdings_csv:
@@ -341,8 +378,8 @@ def main():
     if args.only_valuation:
         run_portfolio = False
         run_optimal = False
-        run_backtests = False
-        run_valuations = True
+        run_backtests = not args.skip_backtest
+        run_valuations = not args.skip_valuation
     else:
         run_portfolio = not args.skip_portfolio
         run_optimal = not args.skip_optimal
@@ -364,7 +401,20 @@ def main():
         multi_alloc_granularity = args.multi_alloc / 100
         print(f"\n📊 Multi-allocation analysis enabled: {args.multi_alloc}% granularity")
     
-    # 6. Run
+    # 6. Sprint 1 Options
+    sprint1_options = {
+        'enable_stress_test': args.stress_test,
+        'stress_portfolio_value': args.stress_value,
+        'use_ledoit_wolf': args.ledoit_wolf,
+        'enable_rebalancing': args.rebalance,
+        'rebalancing_portfolio_value': args.rebalance_value,
+        # Defaults for CLI
+        'min_trade_value': 100, 
+        'round_to_lots': False
+    }
+
+    # 7. Run
+    print(f"DEBUG CLI: sprint1_options = {sprint1_options}")
     orchestrator, output_dir = run_from_screener(
         csv_path=args.csv,
         config=config,
@@ -375,7 +425,8 @@ def main():
         run_optimal=run_optimal,
         run_backtests=run_backtests,
         run_valuations=run_valuations,
-        multi_alloc_granularity=multi_alloc_granularity
+        multi_alloc_granularity=multi_alloc_granularity,
+        sprint1_options=sprint1_options
     )
     
     return orchestrator
